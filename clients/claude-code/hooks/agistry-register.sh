@@ -35,8 +35,7 @@ curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/d
 # SessionStart stdout is injected into the agent's context — seed the role-register trigger.
 cat <<NUDGE
 [agistry] This session ($SID) joined the agent registry at $URL.
-If you are working a specific task in a specific role (implementer, reviewer,
-researcher, planner, …), use the agistry skill once to record your role — and to
-see or message other agents — so the party stays accurate.
+As soon as it is clear what your task is, register yourself to the registry with your clear task and role by using the agistry skill (run: ~/.claude/skills/agistry/agistry.sh join <role> <task>).
+You can also use the agistry skill to see who else is working (who) and to message or hand off to other agents (send/inbox).
 NUDGE
 exit 0
