@@ -9,3 +9,5 @@
 *.db-shm
 # local secrets / config (the *.env.example templates are kept)
 *.env
+# node deps (channel client)
+node_modules/
