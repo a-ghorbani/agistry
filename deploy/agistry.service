@@ -1,0 +1,20 @@
+[Unit]
+Description=agistry — agent registry + mailbox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/paths to your host. The DB lives under WorkingDirectory.
+User=agistry
+WorkingDirectory=/opt/agistry
+EnvironmentFile=/opt/agistry/agistry.env
+ExecStart=/opt/agistry/agistry
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/opt/agistry
+
+[Install]
+WantedBy=multi-user.target

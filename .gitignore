@@ -1,0 +1,11 @@
+# build output
+/agistry
+# local Go SDK bootstrapped by build.sh
+/.gosdk/
+*.tar.gz
+# runtime state
+*.db
+*.db-wal
+*.db-shm
+# local secrets / config (the *.env.example templates are kept)
+*.env

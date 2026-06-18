@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agistry — who's in the party</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+         background:#0d1117; color:#c9d1d9; }
+  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+           padding:12px 16px; border-bottom:1px solid #21262d; background:#161b22; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  .grow { flex:1; }
+  input, select, button { font:inherit; background:#0d1117; color:#c9d1d9;
+           border:1px solid #30363d; border-radius:6px; padding:5px 8px; }
+  button { cursor:pointer; }
+  label.chk { display:flex; gap:5px; align-items:center; }
+  .meta { color:#8b949e; font-size:12px; }
+  .err { color:#f85149; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 12px; border-bottom:1px solid #21262d;
+           white-space:nowrap; }
+  th { color:#8b949e; font-weight:600; font-size:12px; text-transform:uppercase;
+       position:sticky; top:0; background:#161b22; }
+  td.path { white-space:normal; color:#8b949e; max-width:340px; overflow:hidden;
+            text-overflow:ellipsis; }
+  tr.taskhdr td { background:#0b0f14; color:#58a6ff; font-weight:600; }
+  .badge { padding:1px 8px; border-radius:10px; font-size:12px; }
+  .s-active { background:#1a3326; color:#3fb950; }
+  .s-unassigned { background:#21262d; color:#8b949e; }
+  .s-gone { background:#3a1414; color:#f85149; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
+  .empty { padding:40px; text-align:center; color:#8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#127881; who&#39;s in the party</h1>
+  <span id="summary" class="meta"></span>
+  <span class="grow"></span>
+  <input id="tok" type="password" placeholder="registry token" size="22">
+  <label class="chk"><input id="gone" type="checkbox"> show gone</label>
+  <select id="every">
+    <option value="2000">2s</option>
+    <option value="5000" selected>5s</option>
+    <option value="10000">10s</option>
+    <option value="0">off</option>
+  </select>
+  <button id="refresh">refresh</button>
+</header>
+<div id="status" class="meta" style="padding:6px 16px"></div>
+<div id="body"></div>
+
+<script>
+(function(){
+  var tok = document.getElementById('tok');
+  var gone = document.getElementById('gone');
+  var every = document.getElementById('every');
+  var body = document.getElementById('body');
+  var status = document.getElementById('status');
+  var summary = document.getElementById('summary');
+  var timer = null;
+
+  tok.value = localStorage.getItem('registry_token') || '';
+
+  function rel(ts){
+    var s = Math.floor(Date.now()/1000) - ts;
+    if (s < 0) s = 0;
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm';
+    if (s < 86400) return Math.floor(s/3600) + 'h';
+    return Math.floor(s/86400) + 'd';
+  }
+  function esc(x){
+    return String(x==null?'':x).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+
+  function render(data){
+    var a = data.agents || [];
+    var active = a.filter(function(x){return x.state==='active';}).length;
+    summary.textContent = a.length + ' agents · ' + active + ' active';
+    if (!a.length){ body.innerHTML = '<div class="empty">no agents registered</div>'; return; }
+    var rows = ['<table><thead><tr>',
+      '<th>role</th><th>state</th><th>session</th><th>host</th>',
+      '<th>notify</th><th>seen</th><th>cwd</th></tr></thead><tbody>'];
+    var lastTask = null;
+    a.forEach(function(x){
+      if (x.task !== lastTask){
+        lastTask = x.task;
+        rows.push('<tr class="taskhdr"><td colspan="7">' + esc(x.task || '(no task)') + '</td></tr>');
+      }
+      var sc = 's-' + (x.state || 'unassigned');
+      rows.push('<tr>' +
+        '<td>' + esc(x.role || '—') + '</td>' +
+        '<td><span class="badge ' + sc + '"><span class="dot" style="background:currentColor"></span>' + esc(x.state) + '</span></td>' +
+        '<td title="' + esc(x.session_id) + '">' + esc((x.session_id||'').slice(0,8)) + '</td>' +
+        '<td>' + esc(x.host || '—') + '</td>' +
+        '<td>' + esc(x.notify || '—') + '</td>' +
+        '<td>' + rel(x.last_seen) + '</td>' +
+        '<td class="path">' + esc(x.cwd || '') + '</td>' +
+      '</tr>');
+    });
+    rows.push('</tbody></table>');
+    body.innerHTML = rows.join('');
+  }
+
+  function load(){
+    var t = tok.value.trim();
+    localStorage.setItem('registry_token', t);
+    var url = '/agents' + (gone.checked ? '?all=1' : '');
+    fetch(url, { headers: { 'X-Registry-Token': t } })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){ render(d); status.className='meta'; status.textContent = 'updated ' + new Date().toLocaleTimeString(); })
+      .catch(function(e){ status.className='err'; status.textContent = 'error: ' + e.message + (String(e.message).indexOf('401')>=0 ? ' (check token)' : ''); });
+  }
+
+  function schedule(){
+    if (timer) clearInterval(timer);
+    var ms = parseInt(every.value, 10);
+    if (ms > 0) timer = setInterval(load, ms);
+  }
+
+  document.getElementById('refresh').onclick = load;
+  every.onchange = schedule;
+  gone.onchange = load;
+  tok.onchange = load;
+  load(); schedule();
+})();
+</script>
+</body>
+</html>
