@@ -86,9 +86,10 @@ if [ "$WITH_CHANNEL" = 1 ]; then
     echo "  channel -> $CH (npm not found — install Node deps there manually)"
   fi
   echo
-  echo "  To enable live-wake, launch Claude Code with the channel flag (do NOT add it to mcpServers):"
-  echo "    claude --dangerously-load-development-channels server:$CH/agistry-channel.mjs"
-  echo "  Tip: alias it, e.g.  alias claude-party='claude --dangerously-load-development-channels server:$CH/agistry-channel.mjs'"
+  echo "  To enable live-wake (channel), register it as an MCP server (the flag needs a NAME):"
+  echo "    claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
+  echo "  Then add this alias (the env var gates polling so it stays idle in normal sessions):"
+  echo "    alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
 fi
 
 echo

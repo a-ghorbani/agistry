@@ -84,5 +84,13 @@ async function poll() {
   }
 }
 
-setInterval(poll, pollMs);
-poll();
+// Only poll/drain when explicitly running as a channel. The `claude-party` launch
+// sets AGISTRY_CHANNEL_ACTIVE=1; without it we are just an MCP server spawned in a
+// normal session (because we're listed in mcpServers so the --channels flag can find
+// us) and must stay idle, or we'd silently consume the mailbox. (Channels are a
+// research preview with no documented "am I a channel" signal, hence this env gate;
+// it rides the same env inheritance the channel already uses for CLAUDE_CODE_SESSION_ID.)
+if (process.env.AGISTRY_CHANNEL_ACTIVE === '1') {
+  setInterval(poll, pollMs);
+  poll();
+}

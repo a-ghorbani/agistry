@@ -14,9 +14,10 @@ would be unreachable), it does **not** open a port. Instead it **polls
 via `notifications/claude/channel` (it appears as `<channel source="agistry">…`).
 The agent replies through the normal skill (`agistry.sh send`).
 
-Polling starts **only after `mcp.connect()` succeeds**, which only happens when the
-session is launched with the channel flag below. If it is ever spawned outside
-channel mode, it exits before touching the mailbox.
+Polling starts **only when `AGISTRY_CHANNEL_ACTIVE=1`** is set (the `claude-party`
+launch below sets it). The server has to be listed in `mcpServers` for the channel
+flag to find it, so Claude also spawns it in normal sessions — the env gate keeps it
+idle there, so it never touches the mailbox unless it is really acting as a channel.
 
 ## Install
 
@@ -31,20 +32,22 @@ comes from `~/.config/agistry/client.env`, the same file the hooks/skill use.
 
 ## Enable
 
-⚠️ **Never add this server to `mcpServers` (`~/.claude.json` / `.mcp.json`).** A
-server listed there is spawned in *every* session, and this one would then drain
-your mailbox even when not acting as a channel — messages would be marked delivered
-but never shown. Instead, load it only via the explicit flag:
+The `--dangerously-load-development-channels` flag takes the **name** of a registered
+MCP server (not a path), so register it once (user scope, absolute path):
 
 ```bash
-claude --dangerously-load-development-channels server:$HOME/.claude/agistry-channel/agistry-channel.mjs
+claude mcp add -s user agistry-channel -- node "$HOME/.claude/agistry-channel/agistry-channel.mjs"
 ```
 
-Handy alias:
+Then launch party sessions with the flag **and** the activation env var. Thanks to
+the env gate, having it in `mcpServers` is safe — it idles in every non-party session:
 
 ```bash
-alias claude-party='claude --dangerously-load-development-channels server:$HOME/.claude/agistry-channel/agistry-channel.mjs'
+alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'
 ```
+
+Run `claude-party` from any project directory; the channel attaches and starts
+polling your inbox.
 
 ## Caveats
 
