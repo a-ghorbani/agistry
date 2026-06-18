@@ -8,11 +8,11 @@ state, an embedded web dashboard.
 
 ```
 ┌── agent A ──┐   register / assign / heartbeat        ┌─────────────┐
-│ session_id  │ ────────────────────────────────────▶ │             │
-│ task + role │   send → mailbox                        │   agistry   │  ◀── browser: /
-└─────────────┘ ◀──────────────────────────────────── │  (registry  │      "who's in
-┌── agent B ──┐   inbox (drain)                         │  + mailbox) │       the party"
-└─────────────┘                                         └─────────────┘
+│ session_id  │ ────────────────────────────────────▶  │             │
+│ task + role │   send → mailbox                       │   agistry   │  ◀── browser: /
+└─────────────┘ ◀────────────────────────────────────  │  (registry  │      "who's in
+┌── agent B ──┐   inbox (drain)                        │  + mailbox) │       the party"
+└─────────────┘                                        └─────────────┘
 ```
 
 ## Why
