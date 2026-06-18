@@ -9,7 +9,7 @@ Two pieces:
 | --- | --- | --- |
 | `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host); nudges the agent to declare its role. |
 | `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` when it ends. |
-| `skills/agistry-join/` | Skill | The agent invokes this **autonomously** to record its task + role. |
+| `skills/agistry/` | Skill | One skill the agent invokes to join (record task+role), see who's around, and message peers — via an auth-wrapping CLI (`agistry.sh`). |
 
 The hook can only know *identity* (it fires before any conversation); *role* is
 semantic, so the agent declares it via the skill. The hook seeds the trigger by
@@ -37,9 +37,9 @@ cp hooks/agistry-register.sh hooks/agistry-deregister.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/agistry-*.sh
 
 # skill
-mkdir -p ~/.claude/skills/agistry-join
-cp skills/agistry-join/SKILL.md skills/agistry-join/assign.sh ~/.claude/skills/agistry-join/
-chmod +x ~/.claude/skills/agistry-join/assign.sh
+mkdir -p ~/.claude/skills/agistry
+cp skills/agistry/SKILL.md skills/agistry/agistry.sh ~/.claude/skills/agistry/
+chmod +x ~/.claude/skills/agistry/agistry.sh
 ```
 
 Then add the hooks to `~/.claude/settings.json` (merge with any existing `hooks`):

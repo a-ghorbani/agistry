@@ -36,7 +36,7 @@ curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/d
 cat <<NUDGE
 [agistry] This session ($SID) joined the agent registry at $URL.
 If you are working a specific task in a specific role (implementer, reviewer,
-researcher, planner, …), invoke the agistry-join skill once to record your role
-so other agents can see you and hand off work to you.
+researcher, planner, …), use the agistry skill once to record your role — and to
+see or message other agents — so the party stays accurate.
 NUDGE
 exit 0
