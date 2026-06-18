@@ -38,13 +38,15 @@ curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/d
 HB="$HOME/.claude/hooks/agistry-heartbeat.sh"
 PIDFILE="${TMPDIR:-/tmp}/agistry-hb-$SID.pid"
 if [ -x "$HB" ] && { [ ! -f "$PIDFILE" ] || ! kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; }; then
-  cpid="$PPID"; p="$PPID"
-  for _ in 1 2 3 4 5 6; do
+  cpid=""; nonshell=""; p="$PPID"
+  for _ in 1 2 3 4 5 6 7 8; do
     { [ -z "$p" ] || [ "$p" -le 1 ] 2>/dev/null; } && break
     c=$(ps -o comm= -p "$p" 2>/dev/null); c=${c##*/}
     if [ "$c" = "claude" ]; then cpid="$p"; break; fi
+    case "$c" in sh|-sh|bash|-bash|zsh|-zsh|dash|fish) : ;; *) [ -z "$nonshell" ] && nonshell="$p" ;; esac
     p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
   done
+  [ -z "$cpid" ] && cpid="${nonshell:-$PPID}"
   nohup "$HB" "$SID" "$cpid" >/dev/null 2>&1 &
   echo $! > "$PIDFILE"
 fi
