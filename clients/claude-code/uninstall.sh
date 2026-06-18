@@ -25,7 +25,7 @@ else
   echo "  skipped settings.json (no jq or no file) — remove the agistry hooks by hand."
 fi
 
-rm -f "$CLAUDE_DIR/hooks/agistry-register.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh"
+rm -f "$CLAUDE_DIR/hooks/agistry-register.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh" "$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
 rm -rf "$CLAUDE_DIR/skills/agistry" "$CLAUDE_DIR/agistry-channel"
 echo "  removed hooks, skill, and channel"
 echo "  left ~/.config/agistry/client.env in place (delete it yourself if you want)"

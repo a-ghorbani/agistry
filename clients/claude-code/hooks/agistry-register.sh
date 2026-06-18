@@ -32,6 +32,23 @@ fi
 
 curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/dev/null 2>&1 || true
 
+# Start the heartbeat daemon so this session stays present while Claude is alive,
+# even when idle. Watch the claude process (usually our parent) so the daemon exits
+# when the session dies.
+HB="$HOME/.claude/hooks/agistry-heartbeat.sh"
+PIDFILE="${TMPDIR:-/tmp}/agistry-hb-$SID.pid"
+if [ -x "$HB" ] && { [ ! -f "$PIDFILE" ] || ! kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; }; then
+  cpid="$PPID"; p="$PPID"
+  for _ in 1 2 3 4 5 6; do
+    { [ -z "$p" ] || [ "$p" -le 1 ] 2>/dev/null; } && break
+    c=$(ps -o comm= -p "$p" 2>/dev/null); c=${c##*/}
+    if [ "$c" = "claude" ]; then cpid="$p"; break; fi
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  nohup "$HB" "$SID" "$cpid" >/dev/null 2>&1 &
+  echo $! > "$PIDFILE"
+fi
+
 # SessionStart stdout is injected into the agent's context — seed the role-register trigger.
 cat <<NUDGE
 [agistry] This session ($SID) joined the agent registry at $URL.

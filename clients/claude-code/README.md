@@ -6,8 +6,9 @@ running session.
 
 | Piece | Type | What it does |
 | --- | --- | --- |
-| `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host); nudges the agent to declare its role. |
-| `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` when it ends. |
+| `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host); nudges the agent to declare its role; starts the heartbeat daemon. |
+| `hooks/agistry-heartbeat.sh` | daemon | Pings `/heartbeat` on a timer while the Claude process is alive (so an idle session persists for days); exits + deregisters when Claude dies. |
+| `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` and stops the heartbeat daemon when the session ends. |
 | `skills/agistry/` | Skill | One skill the agent invokes to join (record task+role), see who's around, and message peers — via an auth-wrapping CLI (`agistry.sh`). |
 | `channel/` | Channel (optional) | Live-wake: surfaces mailbox messages into a running session. See [channel/README.md](channel/README.md). |
 
@@ -40,7 +41,7 @@ Uninstall with `clients/claude-code/uninstall.sh`.
 
 ### What it writes
 
-- `~/.claude/hooks/agistry-{register,deregister}.sh`
+- `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
 - `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
 - `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
 - `~/.claude/settings.json` → `hooks.SessionStart` (startup) + `hooks.SessionEnd`

@@ -16,4 +16,11 @@ SID="$(jget .session_id)"; [ -z "$SID" ] && SID="${CLAUDE_CODE_SESSION_ID:-}"
 
 curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/deregister" \
   -d "{\"session_id\":\"$SID\"}" >/dev/null 2>&1 || true
+
+# stop the heartbeat daemon for this session
+PIDFILE="${TMPDIR:-/tmp}/agistry-hb-$SID.pid"
+if [ -f "$PIDFILE" ]; then
+  kill "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null || true
+  rm -f "$PIDFILE"
+fi
 exit 0

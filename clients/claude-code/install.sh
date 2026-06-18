@@ -29,6 +29,7 @@ echo "Installing agistry client into $CLAUDE_DIR"
 mkdir -p "$CLAUDE_DIR/hooks"
 install -m 0755 "$HERE/hooks/agistry-register.sh"   "$CLAUDE_DIR/hooks/agistry-register.sh"
 install -m 0755 "$HERE/hooks/agistry-deregister.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh"
+install -m 0755 "$HERE/hooks/agistry-heartbeat.sh"  "$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
 echo "  hooks  -> $CLAUDE_DIR/hooks/"
 
 # 2. skill
