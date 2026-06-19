@@ -62,7 +62,7 @@ if command -v jq >/dev/null 2>&1; then
     .hooks = (.hooks // {})
     | .hooks.SessionStart = (((.hooks.SessionStart // [])
         | map(select((.hooks // []) | map(.command) | index($reg) | not)))
-        + [{matcher:"startup", hooks:[{type:"command", command:$reg}]}])
+        + [{matcher:"startup|resume", hooks:[{type:"command", command:$reg}]}])
     | .hooks.SessionEnd = (((.hooks.SessionEnd // [])
         | map(select((.hooks // []) | map(.command) | index($dereg) | not)))
         + [{matcher:"*", hooks:[{type:"command", command:$dereg}]}])
