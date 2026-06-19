@@ -16,8 +16,8 @@ if command -v jq >/dev/null 2>&1 && [ -f "$SETTINGS" ]; then
   tmp="$(mktemp)"
   jq --arg reg "$REG" --arg dereg "$DEREG" '
     if .hooks then
-      .hooks.SessionStart = ((.hooks.SessionStart // []) | map(select((.hooks // []) | map(.command) | index($reg) | not)))
-      | .hooks.SessionEnd = ((.hooks.SessionEnd // []) | map(select((.hooks // []) | map(.command) | index($dereg) | not)))
+      .hooks.SessionStart = ((.hooks.SessionStart // []) | map(select(([.hooks[]?.command] | map(test("agistry-register")) | any) | not)))
+      | .hooks.SessionEnd = ((.hooks.SessionEnd // []) | map(select(([.hooks[]?.command] | map(test("agistry-deregister")) | any) | not)))
     else . end
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "  hooks unwired from $SETTINGS (backup saved)"

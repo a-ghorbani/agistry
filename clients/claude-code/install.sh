@@ -61,10 +61,10 @@ if command -v jq >/dev/null 2>&1; then
   jq --arg reg "$REG" --arg dereg "$DEREG" '
     .hooks = (.hooks // {})
     | .hooks.SessionStart = (((.hooks.SessionStart // [])
-        | map(select((.hooks // []) | map(.command) | index($reg) | not)))
+        | map(select(([.hooks[]?.command] | map(test("agistry-register")) | any) | not)))
         + [{matcher:"startup|resume", hooks:[{type:"command", command:$reg}]}])
     | .hooks.SessionEnd = (((.hooks.SessionEnd // [])
-        | map(select((.hooks // []) | map(.command) | index($dereg) | not)))
+        | map(select(([.hooks[]?.command] | map(test("agistry-deregister")) | any) | not)))
         + [{matcher:"*", hooks:[{type:"command", command:$dereg}]}])
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "  hooks wired into $SETTINGS (backup saved)"
