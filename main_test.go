@@ -82,6 +82,15 @@ func TestSendIdempotentOnMsgID(t *testing.T) {
 	}
 }
 
+func TestSendResolvesSessionPrefix(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"abcd1234-full-0001","cwd":"/x"}`)
+	do(t, "POST", "/send", `{"to":"abcd1234","from":"t","msg":"hi via prefix"}`)
+	if _, m := do(t, "GET", "/inbox?session_id=abcd1234-full-0001", ""); m["count"].(float64) != 1 {
+		t.Fatalf("prefix send should reach the full session, got %v", m["count"])
+	}
+}
+
 func TestInboxNoSessionLeak(t *testing.T) {
 	setup(t)
 	// A is the intended recipient; B is registered but has not joined a role yet

@@ -23,7 +23,7 @@ Everything goes through one authenticated CLI that reads the registry URL and to
 | --- | --- | --- |
 | `join <role> [task] [handle]` | `POST /assign` | Declare THIS session's role (e.g. implementer, reviewer, researcher). `task` from your worktree (e.g. `TASK-20260618-1234`); omit if none. |
 | `who [task] [role]` | `GET /agents` | List agents (the party). Filter by task and/or role. |
-| `send <to> <msg>` | `POST /send` | Message another agent. `to` = `TASK:role` (e.g. `TASK-1:implementer`) or a `session_id`. Durable — waits in their mailbox. |
+| `send <to> <msg>` | `POST /send` | Message another agent. `to` = a `session_id` (full, or a unique short prefix like `8edb7472`) or `TASK:role` (e.g. `TASK-1:implementer`). A bare role name does NOT work — use `TASK:role`. Durable — waits in their mailbox. |
 | `inbox` | `GET /inbox` | Drain messages addressed to YOU (this session / your task:role). |
 | `heartbeat` | `POST /heartbeat` | Mark yourself still alive (the registry ages out silent agents). |
 | `register [cwd]` | `POST /register` | Identity stub — the SessionStart hook normally does this; manual fallback only. |

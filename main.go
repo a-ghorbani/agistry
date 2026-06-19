@@ -336,8 +336,38 @@ FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...
 	ok(w, map[string]any{"agents": out, "count": len(out)})
 }
 
+// resolveSession returns the full session_id for an exact id, or for an unambiguous
+// prefix of a live agent — so a human can address the short id shown in the dashboard
+// (e.g. `to: "8edb7472"`). Falls back to the input unchanged if there is no unique
+// live match.
+func resolveSession(s string) string {
+	var exact string
+	_ = db.QueryRow(`SELECT session_id FROM agents WHERE session_id=?`, s).Scan(&exact)
+	if exact != "" {
+		return exact
+	}
+	rows, err := db.Query(`SELECT session_id FROM agents WHERE state<>'gone' AND session_id LIKE ?`, s+"%")
+	if err != nil {
+		return s
+	}
+	defer rows.Close()
+	var match string
+	n := 0
+	for rows.Next() {
+		var x string
+		if rows.Scan(&x) == nil {
+			match = x
+			n++
+		}
+	}
+	if n == 1 {
+		return match
+	}
+	return s
+}
+
 // POST /send {to, task, role, from, msg, msg_id}
-// Target is either `to` ("TASK-x:role" or a session_id) or explicit task+role.
+// Target is either `to` ("TASK-x:role" or a session_id / unique prefix) or explicit task+role.
 // Idempotent on msg_id. Stores in the mailbox; best-effort push if target wants it.
 func handleSend(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -358,7 +388,7 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 			parts := strings.SplitN(in.To, ":", 2)
 			toTask, toRole = parts[0], parts[1]
 		} else {
-			toSession = in.To
+			toSession = resolveSession(in.To)
 		}
 	}
 	if toSession == "" && toRole == "" {
