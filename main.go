@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -554,5 +555,11 @@ func handleUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if dir := os.Getenv("AGISTRY_WEB_DIR"); dir != "" { // dev mode: serve from disk for fast UI iteration
+		if b, err := os.ReadFile(filepath.Join(dir, "index.html")); err == nil {
+			_, _ = w.Write(b)
+			return
+		}
+	}
 	_, _ = w.Write([]byte(uiHTML))
 }

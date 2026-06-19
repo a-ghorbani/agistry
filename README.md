@@ -62,6 +62,7 @@ REGISTRY_TOKEN=dev ./agistry
 | `REGISTRY_DB` | `registry.db` | SQLite file path |
 | `REGISTRY_TOKEN` | _(unset = auth off)_ | Shared bearer token |
 | `REGISTRY_TTL_SECONDS` | `600` | Idle seconds before an agent is marked `gone` |
+| `AGISTRY_WEB_DIR` | _(unset = embedded)_ | Dev: serve `web/index.html` from this dir instead of the embedded copy (edit + refresh, no rebuild) |
 
 ## Deploy (systemd)
 

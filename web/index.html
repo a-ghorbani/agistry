@@ -26,7 +26,15 @@
   td.path { white-space:normal; color:#8b949e; max-width:340px; overflow:hidden;
             text-overflow:ellipsis; }
   tr.taskhdr td { background:#0b0f14; color:#58a6ff; font-weight:600; }
-  tr.member td:first-child { padding-left:24px; border-left:2px solid #2d4f6e; }
+  tr.member td.caret { cursor:pointer; color:#8b949e; text-align:center; width:20px;
+       padding-left:18px; border-left:2px solid #2d4f6e; user-select:none; }
+  tr.member td.caret:hover { color:#c9d1d9; }
+  tr.detail td { background:#0b0f14; padding:6px 12px 10px; }
+  .msgs .msg { display:flex; gap:10px; align-items:baseline; padding:3px 0; font-size:13px; }
+  .msgs .t { color:#6e7681; width:34px; flex:none; }
+  .msgs .ar { color:#58a6ff; width:12px; flex:none; text-align:center; }
+  .msgs .o { color:#c9d1d9; width:110px; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .msgs .b { color:#8b949e; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { padding:1px 8px; border-radius:10px; font-size:12px; }
   .s-active { background:#1a3326; color:#3fb950; }
   .s-unassigned { background:#21262d; color:#8b949e; }
@@ -55,8 +63,6 @@
 </header>
 <div id="status" class="meta" style="padding:6px 16px"></div>
 <div id="body"></div>
-<div class="sec">recent messages</div>
-<div id="messages"></div>
 
 <script>
 (function(){
@@ -84,71 +90,91 @@
     });
   }
 
-  function render(data){
-    var a = data.agents || [];
+  var expanded = {};
+  var lastAgents = { agents: [] };
+  var lastMessages = [];
+
+  function messagesFor(a){
+    var sid = a.session_id;
+    return lastMessages.filter(function(m){
+      if (m.from === sid) return true;
+      if (m.to_session === sid) return true;
+      if (!m.to_session && m.to_task && m.to_task === a.task && (m.to_role === a.role || !m.to_role)) return true;
+      return false;
+    });
+  }
+
+  function detailHtml(a){
+    var ms = messagesFor(a);
+    if (!ms.length) return '<span class="meta">no recent messages for this session</span>';
+    var out = ['<div class="msgs">'];
+    ms.forEach(function(m){
+      var outgoing = m.from === a.session_id;
+      var other = outgoing
+        ? (m.to_session ? m.to_session.slice(0,8) : ((m.to_task||'') + ':' + (m.to_role||'')))
+        : (m.from || '').slice(0,8);
+      var body = m.body || '';
+      out.push('<div class="msg">' +
+        '<span class="t">' + rel(m.created_at) + '</span>' +
+        '<span class="ar">' + (outgoing ? '→' : '←') + '</span>' +
+        '<span class="o" title="' + esc(outgoing ? (m.to_session||'') : (m.from||'')) + '">' + esc(other) + '</span>' +
+        '<span class="badge s-' + (m.delivered ? 'active' : 'unassigned') + '">' + (m.delivered ? 'delivered' : 'pending') + '</span>' +
+        '<span class="b" title="' + esc(body) + '">' + esc(body) + '</span>' +
+      '</div>');
+    });
+    out.push('</div>');
+    return out.join('');
+  }
+
+  function render(){
+    var a = lastAgents.agents || [];
     var active = a.filter(function(x){return x.state==='active';}).length;
     summary.textContent = a.length + ' agents · ' + active + ' active';
     if (!a.length){ body.innerHTML = '<div class="empty">no agents registered</div>'; return; }
     var rows = ['<table><thead><tr>',
-      '<th>role</th><th>state</th><th>session</th><th>host</th>',
-      '<th>notify</th><th>seen</th><th>cwd</th></tr></thead><tbody>'];
+      '<th></th><th>role</th><th>state</th><th>session</th><th>host</th>',
+      '<th>msgs</th><th>seen</th><th>cwd</th></tr></thead><tbody>'];
     var lastTask = null;
     a.forEach(function(x){
       if (x.task !== lastTask){
         lastTask = x.task;
-        rows.push('<tr class="taskhdr"><td colspan="7">' + esc(x.task || '(no task)') + '</td></tr>');
+        rows.push('<tr class="taskhdr"><td colspan="8">' + esc(x.task || '(no task)') + '</td></tr>');
       }
       var sc = 's-' + (x.state || 'unassigned');
+      var open = !!expanded[x.session_id];
+      var mc = messagesFor(x).length;
       rows.push('<tr class="member">' +
+        '<td class="caret" data-sid="' + esc(x.session_id) + '">' + (open ? '▾' : '▸') + '</td>' +
         '<td>' + esc(x.role || '—') + '</td>' +
         '<td><span class="badge ' + sc + '"><span class="dot" style="background:currentColor"></span>' + esc(x.state) + '</span></td>' +
         '<td title="' + esc(x.session_id) + '">' + esc((x.session_id||'').slice(0,8)) + '</td>' +
         '<td>' + esc(x.host || '—') + '</td>' +
-        '<td>' + esc(x.notify || '—') + '</td>' +
+        '<td>' + (mc || '') + '</td>' +
         '<td>' + rel(x.last_seen) + '</td>' +
         '<td class="path">' + esc(x.cwd || '') + '</td>' +
       '</tr>');
+      if (open){
+        rows.push('<tr class="detail"><td></td><td colspan="7">' + detailHtml(x) + '</td></tr>');
+      }
     });
     rows.push('</tbody></table>');
     body.innerHTML = rows.join('');
-  }
-
-  function renderMessages(data){
-    var ms = data.messages || [];
-    var el = document.getElementById('messages');
-    if (!ms.length){ el.innerHTML = '<div class="empty">no messages</div>'; return; }
-    var rows = ['<table><thead><tr><th>seen</th><th>from</th><th>to</th><th>status</th><th>message</th></tr></thead><tbody>'];
-    ms.forEach(function(m){
-      var to = m.to_session ? esc(m.to_session.slice(0,8)) : esc((m.to_task||'') + ':' + (m.to_role||''));
-      var st = m.delivered
-        ? '<span class="badge s-active">delivered</span>'
-        : '<span class="badge s-unassigned">pending</span>';
-      var body = m.body || '';
-      var snip = esc(body.slice(0,80)) + (body.length > 80 ? '…' : '');
-      rows.push('<tr>' +
-        '<td>' + rel(m.created_at) + '</td>' +
-        '<td title="' + esc(m.from) + '">' + esc((m.from||'').slice(0,8)) + '</td>' +
-        '<td>' + to + '</td>' +
-        '<td>' + st + '</td>' +
-        '<td class="msgbody" title="' + esc(body) + '">' + snip + '</td>' +
-      '</tr>');
-    });
-    rows.push('</tbody></table>');
-    el.innerHTML = rows.join('');
   }
 
   function load(){
     var t = tok.value.trim();
     localStorage.setItem('registry_token', t);
     var url = '/agents' + (gone.checked ? '?all=1' : '');
-    fetch(url, { headers: { 'X-Registry-Token': t } })
-      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(d){ render(d); status.className='meta'; status.textContent = 'updated ' + new Date().toLocaleTimeString(); })
-      .catch(function(e){ status.className='err'; status.textContent = 'error: ' + e.message + (String(e.message).indexOf('401')>=0 ? ' (check token)' : ''); });
-    fetch('/messages?limit=40', { headers: { 'X-Registry-Token': t } })
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(d){ if (d) renderMessages(d); })
-      .catch(function(){});
+    Promise.all([
+      fetch(url, { headers: { 'X-Registry-Token': t } }).then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+      fetch('/messages?limit=100', { headers: { 'X-Registry-Token': t } }).then(function(r){ return r.ok ? r.json() : {messages:[]}; })
+    ]).then(function(res){
+      lastAgents = res[0]; lastMessages = res[1].messages || [];
+      render();
+      status.className='meta'; status.textContent = 'updated ' + new Date().toLocaleTimeString();
+    }).catch(function(e){
+      status.className='err'; status.textContent = 'error: ' + e.message + (String(e.message).indexOf('401')>=0 ? ' (check token)' : '');
+    });
   }
 
   function schedule(){
@@ -158,6 +184,14 @@
   }
 
   document.getElementById('refresh').onclick = load;
+  body.addEventListener('click', function(e){
+    var c = e.target;
+    while (c && c !== body && !(c.classList && c.classList.contains('caret'))) c = c.parentNode;
+    if (c && c.classList && c.classList.contains('caret')){
+      var sid = c.getAttribute('data-sid');
+      if (sid){ expanded[sid] = !expanded[sid]; render(); }
+    }
+  });
   every.onchange = schedule;
   gone.onchange = load;
   tok.onchange = load;
