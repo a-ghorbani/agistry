@@ -95,6 +95,7 @@ func routes() http.Handler {
 	mux.HandleFunc("/agents", auth(handleAgents))
 	mux.HandleFunc("/send", auth(handleSend))
 	mux.HandleFunc("/inbox", auth(handleInbox))
+	mux.HandleFunc("/messages", auth(handleMessages))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("/", handleUI) // unauthenticated page shell; data calls carry the token
 	return mux
@@ -463,6 +464,45 @@ WHERE delivered=0 AND (
 	if len(ids) > 0 {
 		ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
 		_, _ = db.Exec(`UPDATE messages SET delivered=1 WHERE id IN (`+ph+`)`, ids...)
+	}
+	ok(w, map[string]any{"messages": out, "count": len(out)})
+}
+
+// GET /messages?limit=N
+// Read-only recent message feed for the dashboard. Does NOT mark anything delivered.
+func handleMessages(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	rows, err := db.Query(`
+SELECT msg_id, from_session, to_session, to_task, to_role, body, delivered, created_at
+FROM messages ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer rows.Close()
+	type msg struct {
+		MsgID     string `json:"msg_id"`
+		From      string `json:"from"`
+		ToSession string `json:"to_session"`
+		ToTask    string `json:"to_task"`
+		ToRole    string `json:"to_role"`
+		Body      string `json:"body"`
+		Delivered int    `json:"delivered"`
+		CreatedAt int64  `json:"created_at"`
+	}
+	out := []msg{}
+	for rows.Next() {
+		var m msg
+		if err := rows.Scan(&m.MsgID, &m.From, &m.ToSession, &m.ToTask, &m.ToRole, &m.Body, &m.Delivered, &m.CreatedAt); err != nil {
+			fail(w, err)
+			return
+		}
+		out = append(out, m)
 	}
 	ok(w, map[string]any{"messages": out, "count": len(out)})
 }

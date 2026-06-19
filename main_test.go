@@ -107,6 +107,20 @@ func TestInboxNoSessionLeak(t *testing.T) {
 	}
 }
 
+func TestMessagesFeedDoesNotConsume(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"X"}`)
+	do(t, "POST", "/send", `{"to":"X","from":"y","msg":"feed test"}`)
+
+	if _, m := do(t, "GET", "/messages", ""); m["count"].(float64) < 1 {
+		t.Fatalf("feed should list the message, got %v", m["count"])
+	}
+	// the feed must not mark anything delivered — the recipient still gets it
+	if _, m := do(t, "GET", "/inbox?session_id=X", ""); m["count"].(float64) != 1 {
+		t.Fatalf("feed consumed the message (inbox=%v)", m["count"])
+	}
+}
+
 func TestAuthRejectsWithoutToken(t *testing.T) {
 	setup(t)
 	token = "secret"

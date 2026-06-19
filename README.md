@@ -102,6 +102,7 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | GET | `/agents` | `?task=&role=&state=&all=1` | Who's doing what. Hides `gone` unless `all=1`. |
 | POST | `/send` | `{to\|task,role, from, msg, msg_id}` | Queue a message. `to` = `TASK:role` or `session_id`. Idempotent on `msg_id`. |
 | GET | `/inbox` | `?session_id=` | Drain messages for this session or its `task:role`. |
+| GET | `/messages` | `?limit=N` | Read-only recent message feed (does **not** consume). |
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
 
