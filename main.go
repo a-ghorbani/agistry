@@ -396,13 +396,17 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 	_ = db.QueryRow(`SELECT task, role FROM agents WHERE session_id=?`, sid).Scan(&task, &role)
 	_, _ = db.Exec(`UPDATE agents SET last_seen=? WHERE session_id=?`, now(), sid) // touch liveness on poll
 
+	// A message matches this session if it is addressed directly to the session, or
+	// (only for task-addressed messages — those carry no to_session) to its task with
+	// a matching role or a whole-task wildcard (empty to_role). Requiring to_task<>''
+	// prevents a session-targeted message (empty task/role) from leaking to every
+	// not-yet-joined session, which also has empty task/role.
 	rows, err := db.Query(`
 SELECT id, msg_id, from_session, body, created_at FROM messages
 WHERE delivered=0 AND (
-  to_session=? OR
-  (to_task=? AND to_role=?) OR
-  (to_task=? AND to_role='')
-) ORDER BY id`, sid, task, role, task)
+  to_session=?
+  OR (to_session='' AND to_task<>'' AND to_task=? AND (to_role=? OR to_role=''))
+) ORDER BY id`, sid, task, role)
 	if err != nil {
 		fail(w, err)
 		return

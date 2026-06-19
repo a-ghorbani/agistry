@@ -82,6 +82,22 @@ func TestSendIdempotentOnMsgID(t *testing.T) {
 	}
 }
 
+func TestInboxNoSessionLeak(t *testing.T) {
+	setup(t)
+	// A is the intended recipient; B is registered but has not joined a role yet
+	// (so task="" role=""), which previously wildcard-matched session-targeted messages.
+	do(t, "POST", "/register", `{"session_id":"A","cwd":"/x"}`)
+	do(t, "POST", "/register", `{"session_id":"B","cwd":"/y"}`)
+	do(t, "POST", "/send", `{"to":"A","from":"t","msg":"for A only"}`)
+
+	if _, m := do(t, "GET", "/inbox?session_id=B", ""); m["count"].(float64) != 0 {
+		t.Fatalf("leak: role-less B received a message addressed to session A (count=%v)", m["count"])
+	}
+	if _, m := do(t, "GET", "/inbox?session_id=A", ""); m["count"].(float64) != 1 {
+		t.Fatalf("A should have its message, got %v", m["count"])
+	}
+}
+
 func TestAuthRejectsWithoutToken(t *testing.T) {
 	setup(t)
 	token = "secret"
