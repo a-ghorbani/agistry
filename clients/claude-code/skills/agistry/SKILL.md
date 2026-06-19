@@ -21,7 +21,7 @@ Everything goes through one authenticated CLI that reads the registry URL and to
 
 | Command | Endpoint | What it does |
 | --- | --- | --- |
-| `join <role> [task] [handle]` | `POST /assign` | Declare THIS session's role (e.g. implementer, reviewer, researcher). `task` from your worktree (e.g. `TASK-20260618-1234`); omit if none. |
+| `join <role> [task] [handle]` | `POST /assign` | Declare THIS session's role (e.g. implementer, reviewer, researcher). `task` is a SHORT id/label — a work-item id like `POC-29` or `TASK-20260618-1234`, **never a description or status update** (it is a grouping key shown in the dashboard; long text clutters it). Omit if none. |
 | `who [task] [role]` | `GET /agents` | List agents (the party). Filter by task and/or role. |
 | `send <to> <msg>` | `POST /send` | Message another agent. `to` = a `session_id` (full, or a unique short prefix like `8edb7472`) or `TASK:role` (e.g. `TASK-1:implementer`). A bare role name does NOT work — use `TASK:role`. Durable — waits in their mailbox. |
 | `inbox` | `GET /inbox` | Drain messages addressed to YOU (this session / your task:role). |
@@ -60,5 +60,7 @@ Check for messages addressed to you:
 All commands print the registry's JSON response (including `{"error":...}` on failure), and failures are non-fatal — carry on and optionally retry.
 
 `join` is idempotent; re-run it whenever your role or task changes.
+
+Keep `role` and `task` short (single tokens or ids). Status updates, results, and reports belong in a **message** (`send`) — never stuffed into your role or task.
 
 Messages are durable: a `send` to an agent that is offline waits in its mailbox until it polls `inbox` or restarts, so there is no guaranteed instant delivery yet.

@@ -110,6 +110,7 @@
     var out = ['<div class="msgs">'];
     ms.forEach(function(m){
       var outgoing = m.from === a.session_id;
+      var otherFull = outgoing ? (m.to_session || ((m.to_task||'') + ':' + (m.to_role||''))) : (m.from || '');
       var other = outgoing
         ? (m.to_session ? m.to_session.slice(0,8) : ((m.to_task||'') + ':' + (m.to_role||'')))
         : (m.from || '').slice(0,8);
@@ -117,7 +118,7 @@
       out.push('<div class="msg">' +
         '<span class="t">' + rel(m.created_at) + '</span>' +
         '<span class="ar">' + (outgoing ? '→' : '←') + '</span>' +
-        '<span class="o" title="' + esc(outgoing ? (m.to_session||'') : (m.from||'')) + '">' + esc(other) + '</span>' +
+        '<span class="o" title="' + esc(otherFull) + '">' + esc(other) + '</span>' +
         '<span class="badge s-' + (m.delivered ? 'active' : 'unassigned') + '">' + (m.delivered ? 'delivered' : 'pending') + '</span>' +
         '<span class="b" title="' + esc(body) + '">' + esc(body) + '</span>' +
       '</div>');
@@ -138,7 +139,9 @@
     a.forEach(function(x){
       if (x.task !== lastTask){
         lastTask = x.task;
-        rows.push('<tr class="taskhdr"><td colspan="8">' + esc(x.task || '(no task)') + '</td></tr>');
+        var tk = x.task || '';
+        var tkShort = tk.length > 80 ? tk.slice(0,80) + '…' : (tk || '(no task)');
+        rows.push('<tr class="taskhdr"><td colspan="8" title="' + esc(tk) + '">' + esc(tkShort) + '</td></tr>');
       }
       var sc = 's-' + (x.state || 'unassigned');
       var open = !!expanded[x.session_id];
