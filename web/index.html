@@ -26,6 +26,7 @@
   td.path { white-space:normal; color:#8b949e; max-width:340px; overflow:hidden;
             text-overflow:ellipsis; }
   tr.taskhdr td { background:#0b0f14; color:#58a6ff; font-weight:600; }
+  tr.member td:first-child { padding-left:24px; border-left:2px solid #2d4f6e; }
   .badge { padding:1px 8px; border-radius:10px; font-size:12px; }
   .s-active { background:#1a3326; color:#3fb950; }
   .s-unassigned { background:#21262d; color:#8b949e; }
@@ -98,7 +99,7 @@
         rows.push('<tr class="taskhdr"><td colspan="7">' + esc(x.task || '(no task)') + '</td></tr>');
       }
       var sc = 's-' + (x.state || 'unassigned');
-      rows.push('<tr>' +
+      rows.push('<tr class="member">' +
         '<td>' + esc(x.role || '—') + '</td>' +
         '<td><span class="badge ' + sc + '"><span class="dot" style="background:currentColor"></span>' + esc(x.state) + '</span></td>' +
         '<td title="' + esc(x.session_id) + '">' + esc((x.session_id||'').slice(0,8)) + '</td>' +
