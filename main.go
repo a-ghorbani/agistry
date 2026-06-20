@@ -222,6 +222,16 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id and role required")
 		return
 	}
+	// single owner per task:role — reject if another live session already holds it
+	if in.Task != "" {
+		var other string
+		_ = db.QueryRow(`SELECT session_id FROM agents WHERE task=? AND role=? AND state<>'gone' AND session_id<>?`,
+			in.Task, in.Role, in.SessionID).Scan(&other)
+		if other != "" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "role already held on this task", "held_by": other})
+			return
+		}
+	}
 	if in.Notify == "" {
 		if in.Handle != "" {
 			in.Notify = "push"
@@ -368,6 +378,20 @@ func resolveSession(s string) string {
 	return s
 }
 
+// isSelfTarget reports whether a message from `from` is addressed back to itself —
+// either directly (to_session == from) or to a task:role that `from` currently holds.
+func isSelfTarget(from, toSession, toTask, toRole string) bool {
+	if toSession != "" {
+		return toSession == from
+	}
+	if toRole != "" {
+		var n int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE session_id=? AND task=? AND role=?`, from, toTask, toRole).Scan(&n)
+		return n > 0
+	}
+	return false
+}
+
 // POST /send {to, task, role, from, msg, msg_id}
 // Target is either `to` ("TASK-x:role" or a session_id / unique prefix) or explicit task+role.
 // Idempotent on msg_id. Stores in the mailbox; best-effort push if target wants it.
@@ -399,6 +423,13 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Msg == "" {
 		bad(w, "msg required")
+		return
+	}
+	// no self-delivery: a session must never message itself (by id, or its own
+	// task:role). This is what caused the pipeline feedback loop — an orchestrator
+	// that joined a role received its subagents' role-addressed handoffs back.
+	if in.From != "" && isSelfTarget(in.From, toSession, toTask, toRole) {
+		ok(w, map[string]any{"status": "self-ignored"})
 		return
 	}
 	if in.MsgID == "" {

@@ -121,6 +121,38 @@ func TestMessagesFeedDoesNotConsume(t *testing.T) {
 	}
 }
 
+func TestSendSelfIgnored(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"S"}`)
+	do(t, "POST", "/assign", `{"session_id":"S","task":"T","role":"impl"}`)
+
+	if _, m := do(t, "POST", "/send", `{"to":"S","from":"S","msg":"to myself"}`); m["status"] != "self-ignored" {
+		t.Fatalf("send to own session id should be self-ignored, got %v", m["status"])
+	}
+	if _, m := do(t, "POST", "/send", `{"to":"T:impl","from":"S","msg":"to my own role"}`); m["status"] != "self-ignored" {
+		t.Fatalf("send to own task:role should be self-ignored, got %v", m["status"])
+	}
+	if _, m := do(t, "GET", "/inbox?session_id=S", ""); m["count"].(float64) != 0 {
+		t.Fatalf("self messages must not be delivered, inbox=%v", m["count"])
+	}
+}
+
+func TestJoinRejectsDuplicateRole(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"A"}`)
+	do(t, "POST", "/register", `{"session_id":"B"}`)
+
+	if code, _ := do(t, "POST", "/assign", `{"session_id":"A","task":"T","role":"impl"}`); code != 200 {
+		t.Fatalf("first join should succeed, got %d", code)
+	}
+	if code, _ := do(t, "POST", "/assign", `{"session_id":"B","task":"T","role":"impl"}`); code != 409 {
+		t.Fatalf("second join of same task:role should 409, got %d", code)
+	}
+	if code, _ := do(t, "POST", "/assign", `{"session_id":"A","task":"T","role":"impl"}`); code != 200 {
+		t.Fatalf("re-join by the holder should succeed, got %d", code)
+	}
+}
+
 func TestAuthRejectsWithoutToken(t *testing.T) {
 	setup(t)
 	token = "secret"
