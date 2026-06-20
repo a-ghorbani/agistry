@@ -153,6 +153,30 @@ func TestJoinRejectsDuplicateRole(t *testing.T) {
 	}
 }
 
+func TestInboxPeekAndAck(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"X"}`)
+	do(t, "POST", "/send", `{"to":"X","from":"y","msg":"m1","msg_id":"a1"}`)
+	do(t, "POST", "/send", `{"to":"X","from":"y","msg":"m2","msg_id":"a2"}`)
+
+	// peek returns both WITHOUT consuming — twice
+	if _, m := do(t, "GET", "/inbox?peek=1&session_id=X", ""); m["count"].(float64) != 2 {
+		t.Fatalf("peek should return 2, got %v", m["count"])
+	}
+	if _, m := do(t, "GET", "/inbox?peek=1&session_id=X", ""); m["count"].(float64) != 2 {
+		t.Fatalf("peek must not consume; got %v on second peek", m["count"])
+	}
+	// ack only a1 → peek now returns just a2
+	do(t, "POST", "/ack", `{"session_id":"X","msg_ids":["a1"]}`)
+	if _, m := do(t, "GET", "/inbox?peek=1&session_id=X", ""); m["count"].(float64) != 1 {
+		t.Fatalf("after acking a1, peek should be 1, got %v", m["count"])
+	}
+	// the unacked one still delivers via normal (consuming) inbox
+	if _, m := do(t, "GET", "/inbox?session_id=X", ""); m["count"].(float64) != 1 {
+		t.Fatalf("remaining message should still deliver, got %v", m["count"])
+	}
+}
+
 func TestAuthRejectsWithoutToken(t *testing.T) {
 	setup(t)
 	token = "secret"

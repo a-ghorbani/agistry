@@ -96,6 +96,7 @@ func routes() http.Handler {
 	mux.HandleFunc("/agents", auth(handleAgents))
 	mux.HandleFunc("/send", auth(handleSend))
 	mux.HandleFunc("/inbox", auth(handleInbox))
+	mux.HandleFunc("/ack", auth(handleAck))
 	mux.HandleFunc("/messages", auth(handleMessages))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("/", handleUI) // unauthenticated page shell; data calls carry the token
@@ -493,11 +494,42 @@ WHERE delivered=0 AND (
 		out = append(out, m)
 		ids = append(ids, m.ID)
 	}
-	if len(ids) > 0 {
+	// peek=1 returns without consuming (the channel peeks, then /ack's only what it
+	// actually pushed into the session — at-least-once, so a dropped push is retried).
+	if r.URL.Query().Get("peek") != "1" && len(ids) > 0 {
 		ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
 		_, _ = db.Exec(`UPDATE messages SET delivered=1 WHERE id IN (`+ph+`)`, ids...)
 	}
 	ok(w, map[string]any{"messages": out, "count": len(out)})
+}
+
+// POST /ack {session_id, msg_ids:[...]}
+// Marks specific messages delivered — used by the channel after a successful push.
+func handleAck(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SessionID string   `json:"session_id"`
+		MsgIDs    []string `json:"msg_ids"`
+	}
+	if err := readJSON(w, r, &in); err != nil {
+		bad(w, "invalid json")
+		return
+	}
+	if len(in.MsgIDs) == 0 {
+		ok(w, map[string]any{"acked": 0})
+		return
+	}
+	args := make([]any, len(in.MsgIDs))
+	for i, id := range in.MsgIDs {
+		args[i] = id
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(args)), ",")
+	res, err := db.Exec(`UPDATE messages SET delivered=1 WHERE delivered=0 AND msg_id IN (`+ph+`)`, args...)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	ok(w, map[string]any{"acked": n})
 }
 
 // GET /messages?limit=N

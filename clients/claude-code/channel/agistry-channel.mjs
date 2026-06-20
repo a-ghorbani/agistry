@@ -58,12 +58,15 @@ async function poll() {
   if (!sid) return; // without a session id we cannot address an inbox
   let data;
   try {
-    const res = await fetch(`${url}/inbox?session_id=${encodeURIComponent(sid)}`, { headers: authHeaders });
+    // peek (do NOT consume) — we only ack what we actually push, so a dropped push
+    // (e.g. during resume before the session is ready) is retried, not lost.
+    const res = await fetch(`${url}/inbox?peek=1&session_id=${encodeURIComponent(sid)}`, { headers: authHeaders });
     if (!res.ok) return;
     data = await res.json();
   } catch {
     return; // registry unreachable — try again next tick
   }
+  const acked = [];
   for (const m of data.messages || []) {
     try {
       await server.notification({
@@ -77,9 +80,21 @@ async function poll() {
           },
         },
       });
+      acked.push(m.msg_id); // pushed successfully → safe to mark delivered
     } catch {
-      // transport hiccup — the message was already marked delivered by /inbox,
-      // so we do not re-fetch it; acceptable at-most-once for a wake signal.
+      // push failed — leave it pending so the next poll retries it (at-least-once)
+    }
+  }
+  if (acked.length) {
+    try {
+      await fetch(`${url}/ack`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid, msg_ids: acked }),
+      });
+    } catch {
+      // ack failed — messages stay pending; a duplicate push next poll is harmless
+      // (each carries a stable msg_id for the agent to dedupe).
     }
   }
 }
@@ -91,6 +106,7 @@ async function poll() {
 // research preview with no documented "am I a channel" signal, hence this env gate;
 // it rides the same env inheritance the channel already uses for CLAUDE_CODE_SESSION_ID.)
 if (process.env.AGISTRY_CHANNEL_ACTIVE === '1') {
-  setInterval(poll, pollMs);
-  poll();
+  // delay the first poll so a resumed session has settled before we push the first
+  // batch (otherwise early pushes can be dropped before the session surfaces them).
+  setTimeout(() => { poll(); setInterval(poll, pollMs); }, Number(process.env.AGISTRY_CHANNEL_START_DELAY_MS || 3000));
 }
