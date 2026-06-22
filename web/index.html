@@ -119,7 +119,7 @@
         '<span class="t">' + rel(m.created_at) + '</span>' +
         '<span class="ar">' + (outgoing ? '→' : '←') + '</span>' +
         '<span class="o" title="' + esc(otherFull) + '">' + esc(other) + '</span>' +
-        '<span class="badge s-' + (m.delivered ? 'active' : 'unassigned') + '">' + (m.delivered ? 'delivered' : 'pending') + '</span>' +
+        '<span class="badge s-' + (m.dead_lettered ? 'gone' : (m.delivered ? 'active' : 'unassigned')) + '">' + (m.dead_lettered ? 'dead-letter' : (m.delivered ? 'delivered' : 'pending')) + '</span>' +
         '<span class="b" title="' + esc(body) + '">' + esc(body) + '</span>' +
       '</div>');
     });

@@ -4,6 +4,11 @@
 //
 // Single static binary, SQLite (WAL) for durable state, a TTL reaper for
 // self-healing liveness, and an embedded read-only web dashboard.
+//
+// Schema policy: initSchema is authoritative and greenfield (CREATE TABLE … IF NOT
+// EXISTS, no in-repo migrations). State is disposable — agents reconcile their
+// identity on every heartbeat, liveness self-heals via TTL, delivered messages GC.
+// A schema change ships as a clean cutover: stop / delete the db file / restart.
 package main
 
 import (
@@ -19,6 +24,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,13 +33,17 @@ import (
 var uiHTML string
 
 var (
-	db    *sql.DB
-	token string
-	ttl   int64
-	seq   uint64
+	db         *sql.DB
+	token      string
+	ttl        int64
+	pendingTTL int64
+	seq        uint64
 )
 
-const maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
+const (
+	maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
+	maxTaskLen   = 40       // a task is a short grouping tag, not a description
+)
 
 func now() int64 { return time.Now().Unix() }
 
@@ -58,13 +68,14 @@ func main() {
 	dbPath := env("REGISTRY_DB", "registry.db")
 	token = os.Getenv("REGISTRY_TOKEN")
 	ttl = envInt("REGISTRY_TTL_SECONDS", 600)
+	pendingTTL = envInt("REGISTRY_PENDING_TTL_SECONDS", 604800) // 7d: pending handoffs may wait days
 
 	var err error
 	db, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
-	db.SetMaxOpenConns(1) // serialize writes; WAL gives concurrent reads at this scale
+	db.SetMaxOpenConns(1) // single writer; serializes all access (no read concurrency by design)
 	if err := initSchema(); err != nil {
 		log.Fatalf("init schema: %v", err)
 	}
@@ -74,7 +85,7 @@ func main() {
 	if token == "" {
 		log.Println("WARNING: REGISTRY_TOKEN unset — auth disabled (dev only)")
 	}
-	log.Printf("agistry listening on %s (db=%s ttl=%ds)", addr, dbPath, ttl)
+	log.Printf("agistry listening on %s (db=%s ttl=%ds pending_ttl=%ds)", addr, dbPath, ttl, pendingTTL)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           routes(),
@@ -111,24 +122,29 @@ CREATE TABLE IF NOT EXISTS agents (
   role          TEXT NOT NULL DEFAULT '',
   cwd           TEXT NOT NULL DEFAULT '',
   host          TEXT NOT NULL DEFAULT '',
-  handle        TEXT NOT NULL DEFAULT '',
-  notify        TEXT NOT NULL DEFAULT 'poll',
   state         TEXT NOT NULL DEFAULT 'unassigned',
   registered_at INTEGER NOT NULL DEFAULT 0,
   last_seen     INTEGER NOT NULL DEFAULT 0
 );
+-- single owner per (task,role) among live, fully-assigned agents; lets the DB enforce
+-- the invariant atomically instead of a racy check-then-act. Stubs (empty task/role)
+-- and gone agents are excluded so they never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_taskrole
+  ON agents(task, role) WHERE state <> 'gone' AND task <> '' AND role <> '';
 CREATE TABLE IF NOT EXISTS messages (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  msg_id       TEXT UNIQUE,
-  to_session   TEXT NOT NULL DEFAULT '',
-  to_task      TEXT NOT NULL DEFAULT '',
-  to_role      TEXT NOT NULL DEFAULT '',
-  from_session TEXT NOT NULL DEFAULT '',
-  body         TEXT NOT NULL DEFAULT '',
-  created_at   INTEGER NOT NULL DEFAULT 0,
-  delivered    INTEGER NOT NULL DEFAULT 0
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  msg_id           TEXT UNIQUE,
+  to_session       TEXT NOT NULL DEFAULT '',
+  to_task          TEXT NOT NULL DEFAULT '',
+  to_role          TEXT NOT NULL DEFAULT '',
+  from_session     TEXT NOT NULL DEFAULT '',
+  body             TEXT NOT NULL DEFAULT '',
+  created_at       INTEGER NOT NULL DEFAULT 0,
+  delivered_at     INTEGER,  -- NULL = pending (not yet delivered)
+  dead_lettered_at INTEGER   -- NULL = not dead-lettered; set when a pending msg expires unclaimed
 );
-CREATE INDEX IF NOT EXISTS idx_msg_undelivered ON messages(delivered, to_session, to_task, to_role);
+CREATE INDEX IF NOT EXISTS idx_msg_pending ON messages(to_session, to_task, to_role)
+  WHERE delivered_at IS NULL AND dead_lettered_at IS NULL;
 `)
 	return err
 }
@@ -165,8 +181,28 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func ok(w http.ResponseWriter, v any)       { writeJSON(w, http.StatusOK, v) }
 func bad(w http.ResponseWriter, msg string) { writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg}) }
+func conflict(w http.ResponseWriter, v any) { writeJSON(w, http.StatusConflict, v) }
 func fail(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+// validTaskTag enforces that a task is a short grouping tag (id/slug), not a
+// description or status update — long free-text tasks make TASK:role addressing
+// unusable and clutter the dashboard.
+func validTaskTag(s string) bool {
+	if len(s) > maxTaskLen {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func newMsgID() string {
@@ -205,15 +241,17 @@ ON CONFLICT(session_id) DO UPDATE SET
 	ok(w, map[string]any{"status": "registered", "session_id": in.SessionID})
 }
 
-// POST /assign {session_id, task, role, handle, notify}
-// Enriches the entry with the semantic role. Idempotent upsert.
+// POST /assign {session_id, task, role, force}
+// Declares the semantic identity (task + role). Idempotent upsert on session_id.
+// Refuses to silently change an already-declared identity without force (stops a
+// subagent from clobbering its parent's registration), and the DB enforces a single
+// owner per (task,role).
 func handleAssign(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		SessionID string `json:"session_id"`
 		Task      string `json:"task"`
 		Role      string `json:"role"`
-		Handle    string `json:"handle"`
-		Notify    string `json:"notify"`
+		Force     bool   `json:"force"`
 	}
 	if err := readJSON(w, r, &in); err != nil {
 		bad(w, "invalid json")
@@ -223,59 +261,83 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id and role required")
 		return
 	}
+	if in.Task != "" && !validTaskTag(in.Task) {
+		bad(w, "task must be a short tag (≤40 chars, no spaces) — a work-item id or slug like POC-31, not a description; put status/details in a message")
+		return
+	}
+
+	// clobber guard: don't silently overwrite a different existing identity.
+	var curTask, curRole string
+	_ = db.QueryRow(`SELECT task, role FROM agents WHERE session_id=?`, in.SessionID).Scan(&curTask, &curRole)
+	if (curTask != "" || curRole != "") && (curTask != in.Task || curRole != in.Role) && !in.Force {
+		conflict(w, map[string]any{
+			"error":   "session already registered with a different identity; pass force=true to change it",
+			"current": curTask + ":" + curRole,
+		})
+		return
+	}
+
 	// single owner per task:role — reject if another live session already holds it
+	// (nice held_by error; the unique index below is the race-proof backstop).
 	if in.Task != "" {
 		var other string
 		_ = db.QueryRow(`SELECT session_id FROM agents WHERE task=? AND role=? AND state<>'gone' AND session_id<>?`,
 			in.Task, in.Role, in.SessionID).Scan(&other)
 		if other != "" {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "role already held on this task", "held_by": other})
+			conflict(w, map[string]any{"error": "role already held on this task", "held_by": other})
 			return
-		}
-	}
-	if in.Notify == "" {
-		if in.Handle != "" {
-			in.Notify = "push"
-		} else {
-			in.Notify = "poll"
 		}
 	}
 	t := now()
 	_, err := db.Exec(`
-INSERT INTO agents(session_id, task, role, handle, notify, state, registered_at, last_seen)
-VALUES(?, ?, ?, ?, ?, 'active', ?, ?)
+INSERT INTO agents(session_id, task, role, state, registered_at, last_seen)
+VALUES(?, ?, ?, 'active', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
-  task=excluded.task, role=excluded.role, handle=excluded.handle,
-  notify=excluded.notify, state='active', last_seen=excluded.last_seen`,
-		in.SessionID, in.Task, in.Role, in.Handle, in.Notify, t, t)
+  task=excluded.task, role=excluded.role, state='active', last_seen=excluded.last_seen`,
+		in.SessionID, in.Task, in.Role, t, t)
 	if err != nil {
+		if isUniqueViolation(err) {
+			conflict(w, map[string]any{"error": "role already held on this task"})
+			return
+		}
 		fail(w, err)
 		return
 	}
 	ok(w, map[string]any{"status": "assigned", "task": in.Task, "role": in.Role})
 }
 
-// POST /heartbeat {session_id}
+// POST /heartbeat {session_id, cwd, host}
+// Asserts liveness. If the session is unknown (e.g. the registry db was wiped), it
+// re-creates a stub so a still-running session reappears; the client's reconciling
+// /assign restores its role.
 func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		SessionID string `json:"session_id"`
+		Cwd       string `json:"cwd"`
+		Host      string `json:"host"`
 	}
 	if err := readJSON(w, r, &in); err != nil || in.SessionID == "" {
 		bad(w, "session_id required")
 		return
 	}
-	// Bump last_seen and revive from 'gone' to the appropriate live state.
+	t := now()
 	res, err := db.Exec(`
 UPDATE agents
 SET last_seen=?, state=CASE WHEN role!='' THEN 'active' ELSE 'unassigned' END
-WHERE session_id=?`, now(), in.SessionID)
+WHERE session_id=?`, t, in.SessionID)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown session_id"})
-		return
+		if _, err := db.Exec(`
+INSERT INTO agents(session_id, cwd, host, state, registered_at, last_seen)
+VALUES(?, ?, ?, 'unassigned', ?, ?)
+ON CONFLICT(session_id) DO UPDATE SET last_seen=excluded.last_seen`,
+			in.SessionID, in.Cwd, in.Host, t, t); err != nil {
+			fail(w, err)
+			return
+		}
 	}
 	ok(w, map[string]string{"status": "alive"})
 }
@@ -302,8 +364,6 @@ type agentRow struct {
 	Role         string `json:"role"`
 	Cwd          string `json:"cwd"`
 	Host         string `json:"host"`
-	Handle       string `json:"handle"`
-	Notify       string `json:"notify"`
 	State        string `json:"state"`
 	RegisteredAt int64  `json:"registered_at"`
 	LastSeen     int64  `json:"last_seen"`
@@ -330,7 +390,7 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "state!='gone'")
 	}
 	rows, err := db.Query(`
-SELECT session_id, task, role, cwd, host, handle, notify, state, registered_at, last_seen
+SELECT session_id, task, role, cwd, host, state, registered_at, last_seen
 FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...)
 	if err != nil {
 		fail(w, err)
@@ -340,7 +400,7 @@ FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...
 	out := []agentRow{}
 	for rows.Next() {
 		var a agentRow
-		if err := rows.Scan(&a.SessionID, &a.Task, &a.Role, &a.Cwd, &a.Host, &a.Handle, &a.Notify, &a.State, &a.RegisteredAt, &a.LastSeen); err != nil {
+		if err := rows.Scan(&a.SessionID, &a.Task, &a.Role, &a.Cwd, &a.Host, &a.State, &a.RegisteredAt, &a.LastSeen); err != nil {
 			fail(w, err)
 			return
 		}
@@ -352,7 +412,7 @@ FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...
 // resolveSession returns the full session_id for an exact id, or for an unambiguous
 // prefix of a live agent — so a human can address the short id shown in the dashboard
 // (e.g. `to: "8edb7472"`). Falls back to the input unchanged if there is no unique
-// live match.
+// live match (the caller then rejects it rather than queue to nobody).
 func resolveSession(s string) string {
 	var exact string
 	_ = db.QueryRow(`SELECT session_id FROM agents WHERE session_id=?`, s).Scan(&exact)
@@ -379,6 +439,13 @@ func resolveSession(s string) string {
 	return s
 }
 
+// liveSession reports whether a non-gone agent with this exact session_id exists.
+func liveSession(sid string) bool {
+	var x string
+	_ = db.QueryRow(`SELECT session_id FROM agents WHERE session_id=? AND state<>'gone'`, sid).Scan(&x)
+	return x != ""
+}
+
 // isSelfTarget reports whether a message from `from` is addressed back to itself —
 // either directly (to_session == from) or to a task:role that `from` currently holds.
 func isSelfTarget(from, toSession, toTask, toRole string) bool {
@@ -395,7 +462,11 @@ func isSelfTarget(from, toSession, toTask, toRole string) bool {
 
 // POST /send {to, task, role, from, msg, msg_id}
 // Target is either `to` ("TASK-x:role" or a session_id / unique prefix) or explicit task+role.
-// Idempotent on msg_id. Stores in the mailbox; best-effort push if target wants it.
+// Idempotent on msg_id. Stores in the mailbox (the source of truth).
+//
+// A session target must resolve to a live agent (else it's a typo → rejected). A
+// TASK:role target is NOT required to be live: addressing a not-yet-joined role is
+// durable late binding, the headline feature — it waits until someone joins.
 func handleSend(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		To    string `json:"to"`
@@ -416,6 +487,10 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 			toTask, toRole = parts[0], parts[1]
 		} else {
 			toSession = resolveSession(in.To)
+			if !liveSession(toSession) {
+				bad(w, "no live agent matches session '"+in.To+"' — check the id, or address TASK:role")
+				return
+			}
 		}
 	}
 	if toSession == "" && toRole == "" {
@@ -427,8 +502,7 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// no self-delivery: a session must never message itself (by id, or its own
-	// task:role). This is what caused the pipeline feedback loop — an orchestrator
-	// that joined a role received its subagents' role-addressed handoffs back.
+	// task:role) — that caused the pipeline feedback loop.
 	if in.From != "" && isSelfTarget(in.From, toSession, toTask, toRole) {
 		ok(w, map[string]any{"status": "self-ignored"})
 		return
@@ -444,12 +518,21 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		fail(w, err)
 		return
 	}
-	go tryPush(toSession, toTask, toRole) // best-effort wake; mailbox is the source of truth
 	ok(w, map[string]any{"status": "queued", "msg_id": in.MsgID})
 }
 
-// GET /inbox?session_id=
-// Drains undelivered messages addressed to this session or its task:role.
+type inboxMsg struct {
+	MsgID     string `json:"msg_id"`
+	From      string `json:"from"`
+	Body      string `json:"body"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+// GET /inbox?session_id=&peek=1
+// Returns messages addressed to this session or its task:role. The default path
+// consumes atomically (UPDATE … RETURNING in one statement — no read-then-mark race);
+// peek=1 returns without consuming (the channel peeks, then /ack's only what it
+// actually pushed — at-least-once).
 func handleInbox(w http.ResponseWriter, r *http.Request) {
 	sid := r.URL.Query().Get("session_id")
 	if sid == "" {
@@ -460,45 +543,39 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 	_ = db.QueryRow(`SELECT task, role FROM agents WHERE session_id=?`, sid).Scan(&task, &role)
 	_, _ = db.Exec(`UPDATE agents SET last_seen=? WHERE session_id=?`, now(), sid) // touch liveness on poll
 
-	// A message matches this session if it is addressed directly to the session, or
-	// (only for task-addressed messages — those carry no to_session) to its task with
-	// a matching role or a whole-task wildcard (empty to_role). Requiring to_task<>''
-	// prevents a session-targeted message (empty task/role) from leaking to every
-	// not-yet-joined session, which also has empty task/role.
-	rows, err := db.Query(`
-SELECT id, msg_id, from_session, body, created_at FROM messages
-WHERE delivered=0 AND (
+	// A message matches if addressed directly to the session, or (only for task-addressed
+	// messages, which carry no to_session) to its task with a matching role or a whole-task
+	// wildcard. Requiring to_task<>'' stops a session-targeted message (empty task/role)
+	// from leaking to every not-yet-joined session (also empty task/role).
+	const match = `(
   to_session=?
   OR (to_session='' AND to_task<>'' AND to_task=? AND (to_role=? OR to_role=''))
-) ORDER BY id`, sid, task, role)
+)`
+	const cols = `msg_id, from_session, body, created_at`
+	const pending = `delivered_at IS NULL AND dead_lettered_at IS NULL`
+
+	var rows *sql.Rows
+	var err error
+	if r.URL.Query().Get("peek") == "1" {
+		rows, err = db.Query(`SELECT `+cols+` FROM messages WHERE `+pending+` AND `+match+` ORDER BY id`, sid, task, role)
+	} else {
+		// atomic dequeue: select and mark delivered in one statement.
+		rows, err = db.Query(`UPDATE messages SET delivered_at=`+strconv.FormatInt(now(), 10)+
+			` WHERE `+pending+` AND `+match+` RETURNING `+cols, sid, task, role)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	defer rows.Close()
-	type msg struct {
-		ID        int64  `json:"-"`
-		MsgID     string `json:"msg_id"`
-		From      string `json:"from"`
-		Body      string `json:"body"`
-		CreatedAt int64  `json:"created_at"`
-	}
-	out := []msg{}
-	ids := []any{}
+	out := []inboxMsg{}
 	for rows.Next() {
-		var m msg
-		if err := rows.Scan(&m.ID, &m.MsgID, &m.From, &m.Body, &m.CreatedAt); err != nil {
+		var m inboxMsg
+		if err := rows.Scan(&m.MsgID, &m.From, &m.Body, &m.CreatedAt); err != nil {
 			fail(w, err)
 			return
 		}
 		out = append(out, m)
-		ids = append(ids, m.ID)
-	}
-	// peek=1 returns without consuming (the channel peeks, then /ack's only what it
-	// actually pushed into the session — at-least-once, so a dropped push is retried).
-	if r.URL.Query().Get("peek") != "1" && len(ids) > 0 {
-		ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-		_, _ = db.Exec(`UPDATE messages SET delivered=1 WHERE id IN (`+ph+`)`, ids...)
 	}
 	ok(w, map[string]any{"messages": out, "count": len(out)})
 }
@@ -518,12 +595,13 @@ func handleAck(w http.ResponseWriter, r *http.Request) {
 		ok(w, map[string]any{"acked": 0})
 		return
 	}
-	args := make([]any, len(in.MsgIDs))
+	args := make([]any, len(in.MsgIDs)+1)
+	args[0] = now()
 	for i, id := range in.MsgIDs {
-		args[i] = id
+		args[i+1] = id
 	}
-	ph := strings.TrimRight(strings.Repeat("?,", len(args)), ",")
-	res, err := db.Exec(`UPDATE messages SET delivered=1 WHERE delivered=0 AND msg_id IN (`+ph+`)`, args...)
+	ph := strings.TrimRight(strings.Repeat("?,", len(in.MsgIDs)), ",")
+	res, err := db.Exec(`UPDATE messages SET delivered_at=? WHERE delivered_at IS NULL AND msg_id IN (`+ph+`)`, args...)
 	if err != nil {
 		fail(w, err)
 		return
@@ -533,7 +611,7 @@ func handleAck(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /messages?limit=N
-// Read-only recent message feed for the dashboard. Does NOT mark anything delivered.
+// Read-only recent message feed for the dashboard. Does NOT consume anything.
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -542,7 +620,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, err := db.Query(`
-SELECT msg_id, from_session, to_session, to_task, to_role, body, delivered, created_at
+SELECT msg_id, from_session, to_session, to_task, to_role, body, delivered_at, dead_lettered_at, created_at
 FROM messages ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		fail(w, err)
@@ -550,68 +628,61 @@ FROM messages ORDER BY id DESC LIMIT ?`, limit)
 	}
 	defer rows.Close()
 	type msg struct {
-		MsgID     string `json:"msg_id"`
-		From      string `json:"from"`
-		ToSession string `json:"to_session"`
-		ToTask    string `json:"to_task"`
-		ToRole    string `json:"to_role"`
-		Body      string `json:"body"`
-		Delivered int    `json:"delivered"`
-		CreatedAt int64  `json:"created_at"`
+		MsgID        string `json:"msg_id"`
+		From         string `json:"from"`
+		ToSession    string `json:"to_session"`
+		ToTask       string `json:"to_task"`
+		ToRole       string `json:"to_role"`
+		Body         string `json:"body"`
+		Delivered    int    `json:"delivered"`
+		DeadLettered int    `json:"dead_lettered"`
+		CreatedAt    int64  `json:"created_at"`
 	}
 	out := []msg{}
 	for rows.Next() {
 		var m msg
-		if err := rows.Scan(&m.MsgID, &m.From, &m.ToSession, &m.ToTask, &m.ToRole, &m.Body, &m.Delivered, &m.CreatedAt); err != nil {
+		var deliveredAt, deadAt sql.NullInt64
+		if err := rows.Scan(&m.MsgID, &m.From, &m.ToSession, &m.ToTask, &m.ToRole, &m.Body, &deliveredAt, &deadAt, &m.CreatedAt); err != nil {
 			fail(w, err)
 			return
+		}
+		if deliveredAt.Valid {
+			m.Delivered = 1
+		}
+		if deadAt.Valid {
+			m.DeadLettered = 1
 		}
 		out = append(out, m)
 	}
 	ok(w, map[string]any{"messages": out, "count": len(out)})
 }
 
-// tryPush is a best-effort doorbell to a push-capable target's handle.
-// The mailbox remains the source of truth; failures here are non-fatal.
-func tryPush(toSession, toTask, toRole string) {
-	var handle, notify string
-	var err error
-	if toSession != "" {
-		err = db.QueryRow(`SELECT handle, notify FROM agents WHERE session_id=? AND state!='gone'`, toSession).Scan(&handle, &notify)
-	} else {
-		err = db.QueryRow(`SELECT handle, notify FROM agents WHERE task=? AND role=? AND state!='gone' ORDER BY last_seen DESC LIMIT 1`, toTask, toRole).Scan(&handle, &notify)
+// reapOnce performs one self-healing pass: age out silent agents, dead-letter pending
+// messages that were never claimed (visible, not deleted, so a sender can see the
+// handoff was never picked up), and GC long-settled messages.
+func reapOnce(t int64) {
+	if _, err := db.Exec(`UPDATE agents SET state='gone' WHERE state!='gone' AND last_seen < ?`, t-ttl); err != nil {
+		log.Printf("reaper agents: %v", err)
 	}
-	if err != nil || notify != "push" || handle == "" {
-		return
+	if _, err := db.Exec(`UPDATE messages SET dead_lettered_at=? WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND created_at < ?`, t, t-pendingTTL); err != nil {
+		log.Printf("reaper dead-letter: %v", err)
 	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, handle, strings.NewReader(`{"event":"mailbox"}`))
-	if err != nil {
-		return
+	if _, err := db.Exec(`DELETE FROM messages WHERE delivered_at IS NOT NULL AND delivered_at < ?`, t-86400); err != nil {
+		log.Printf("reaper delivered gc: %v", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return
+	if _, err := db.Exec(`DELETE FROM messages WHERE dead_lettered_at IS NOT NULL AND dead_lettered_at < ?`, t-pendingTTL); err != nil {
+		log.Printf("reaper dead-letter gc: %v", err)
 	}
-	_ = resp.Body.Close()
 }
 
-// reaper marks agents stale (gone) past the TTL and prunes old delivered messages.
 func reaper() {
 	for range time.Tick(60 * time.Second) {
-		cutoff := now() - ttl
-		if _, err := db.Exec(`UPDATE agents SET state='gone' WHERE state!='gone' AND last_seen < ?`, cutoff); err != nil {
-			log.Printf("reaper agents: %v", err)
-		}
-		if _, err := db.Exec(`DELETE FROM messages WHERE delivered=1 AND created_at < ?`, now()-86400); err != nil {
-			log.Printf("reaper messages: %v", err)
-		}
+		reapOnce(now())
 	}
 }
 
 // handleUI serves the dashboard shell. It is intentionally unauthenticated and
-// contains no secrets — the page asks for the token and sends it on /agents calls.
+// contains no secrets — the page asks for the token and sends it on data calls.
 func handleUI(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" && r.URL.Path != "/ui" {
 		http.NotFound(w, r)
