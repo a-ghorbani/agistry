@@ -62,6 +62,7 @@ REGISTRY_TOKEN=dev ./agistry
 | `REGISTRY_DB` | `registry.db` | SQLite file path |
 | `REGISTRY_TOKEN` | _(unset = auth off)_ | Shared bearer token |
 | `REGISTRY_TTL_SECONDS` | `600` | Idle seconds before an agent is marked `gone` |
+| `REGISTRY_PENDING_TTL_SECONDS` | `604800` (7d) | Seconds an unclaimed message waits before it is dead-lettered |
 | `AGISTRY_WEB_DIR` | _(unset = embedded)_ | Dev: serve `web/index.html` from this dir instead of the embedded copy (edit + refresh, no rebuild) |
 
 ## Deploy (systemd)
@@ -97,12 +98,13 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | Method | Path | Body / query | Purpose |
 | --- | --- | --- | --- |
 | POST | `/register` | `{session_id, cwd, host}` | Identity stub. Idempotent; never clobbers role. |
-| POST | `/assign` | `{session_id, task, role, handle, notify}` | Set role/task + delivery handle. Upsert. |
-| POST | `/heartbeat` | `{session_id}` | Bump liveness; revives a `gone` entry. |
+| POST | `/assign` | `{session_id, task, role, cwd, host, force}` | Set role/task. `task` must be a short tag (≤40 chars, no spaces). Single owner per `task:role` (409 if held). Refuses to change an existing identity without `force:true`. |
+| POST | `/heartbeat` | `{session_id, cwd, host}` | Bump liveness; revives a `gone` entry and re-creates a stub if the session is unknown (e.g. after a registry wipe). |
 | POST | `/deregister` | `{session_id}` | Mark `gone`. |
 | GET | `/agents` | `?task=&role=&state=&all=1` | Who's doing what. Hides `gone` unless `all=1`. |
-| POST | `/send` | `{to\|task,role, from, msg, msg_id}` | Queue a message. `to` = `TASK:role` or `session_id`. Idempotent on `msg_id`. |
-| GET | `/inbox` | `?session_id=` | Drain messages for this session or its `task:role`. |
+| POST | `/send` | `{to\|task,role, from, msg, msg_id}` | Queue a message. `to` = `TASK:role` (may be not-yet-joined — late binding) or a live `session_id`. Idempotent on `msg_id`. |
+| GET | `/inbox` | `?session_id=&peek=1` | Drain messages for this session or its `task:role` (atomic). `peek=1` returns without consuming. |
+| POST | `/ack` | `{session_id, msg_ids:[...]}` | Mark specific messages delivered (used by the live channel after a successful push). |
 | GET | `/messages` | `?limit=N` | Read-only recent message feed (does **not** consume). |
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
@@ -121,12 +123,30 @@ curl -s $TOK "$BASE/inbox?session_id=def"
 
 ## Delivery model
 
-- The **mailbox is the source of truth** (durable, survives target downtime).
-- If a target registered with `notify=push` and a `handle` URL, `/send` fires a
-  best-effort doorbell `POST {"event":"mailbox"}` to wake it. Failure is non-fatal
-  — the message waits in the mailbox until the target polls `/inbox` or
-  re-registers.
-- `poll-only` agents (no handle) just drain `/inbox` on a timer / on register.
+- The **mailbox is the source of truth** — durable, survives the target being offline.
+- **Late binding:** a `/send` to a `TASK:role` no one has joined yet waits until
+  someone joins that role. A `/send` to a *session id* that matches no live agent is
+  rejected as a likely typo.
+- **Atomic drain:** `/inbox` selects and marks-delivered in a single statement.
+- Two ways a message reaches an agent:
+  - **Live channel** (peek + `/ack`) — the bundled Claude Code channel polls
+    `/inbox?peek=1`, pushes each message into the running session, and `/ack`s only
+    what it delivered: **at-least-once into context** (a dropped push is retried).
+  - **Manual poll** (`/inbox`) — the agent drains its mailbox on demand; consume-on-read,
+    best-effort.
+- **Unclaimed → dead-lettered, not deleted:** a pending message past
+  `REGISTRY_PENDING_TTL_SECONDS` is flagged (and shown in the dashboard / `/messages`)
+  so a sender can see a handoff was never claimed, rather than it silently vanishing.
+- **Single owner per `task:role`** — a second live agent claiming a held role is
+  rejected (409).
+
+## Schema & upgrades
+
+The schema is greenfield — `CREATE TABLE IF NOT EXISTS`, **no in-repo migrations**.
+State is disposable: agents reconcile their identity on every heartbeat, liveness
+self-heals via TTL, delivered messages GC. To ship a schema change: **stop the
+service → delete the `registry.db*` files → restart**; clients re-register within one
+heartbeat. Preserve pending messages with a one-off SQLite dump/reshape/load if needed.
 
 ## License
 
