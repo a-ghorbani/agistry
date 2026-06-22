@@ -40,7 +40,7 @@ reconcile() {
   if [ -n "$role" ]; then
     # replay the full identity — idempotent re-assign of the same role:task is a no-op
     # server-side; only a different live holder makes it conflict.
-    body="$(jq -nc --arg s "$SID" --arg t "$task" --arg r "$role" '{session_id:$s,task:$t,role:$r}')"
+    body="$(jq -nc --arg s "$SID" --arg t "$task" --arg r "$role" --arg c "$cwd" --arg h "$host" '{session_id:$s,task:$t,role:$r,cwd:$c,host:$h}')"
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "X-Registry-Token: $TOK" "$URL/assign" -d "$body" 2>/dev/null)"
     if [ "$code" = "409" ]; then
       # lost the (task,role) race / identity conflict — surface to the agent instead of

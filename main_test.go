@@ -56,6 +56,10 @@ func TestRegisterAssignAgents(t *testing.T) {
 	if a["role"] != "reviewer" || a["state"] != "active" {
 		t.Fatalf("unexpected agent: %v", a)
 	}
+	// cwd came from /register and must survive /assign (which omits it)
+	if a["cwd"] != "/w/TASK-1" {
+		t.Fatalf("assign should preserve cwd, got %v", a["cwd"])
+	}
 }
 
 func TestSendInboxDrainsOnce(t *testing.T) {

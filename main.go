@@ -251,6 +251,8 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 		SessionID string `json:"session_id"`
 		Task      string `json:"task"`
 		Role      string `json:"role"`
+		Cwd       string `json:"cwd"`
+		Host      string `json:"host"`
 		Force     bool   `json:"force"`
 	}
 	if err := readJSON(w, r, &in); err != nil {
@@ -290,11 +292,13 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	t := now()
 	_, err := db.Exec(`
-INSERT INTO agents(session_id, task, role, state, registered_at, last_seen)
-VALUES(?, ?, ?, 'active', ?, ?)
+INSERT INTO agents(session_id, task, role, cwd, host, state, registered_at, last_seen)
+VALUES(?, ?, ?, ?, ?, 'active', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
-  task=excluded.task, role=excluded.role, state='active', last_seen=excluded.last_seen`,
-		in.SessionID, in.Task, in.Role, t, t)
+  task=excluded.task, role=excluded.role, state='active', last_seen=excluded.last_seen,
+  cwd=CASE WHEN excluded.cwd<>'' THEN excluded.cwd ELSE cwd END,
+  host=CASE WHEN excluded.host<>'' THEN excluded.host ELSE host END`,
+		in.SessionID, in.Task, in.Role, in.Cwd, in.Host, t, t)
 	if err != nil {
 		if isUniqueViolation(err) {
 			conflict(w, map[string]any{"error": "role already held on this task"})

@@ -81,7 +81,7 @@ case "$cmd" in
     need_sid
     role="${1:?role required}"; task="${2:-}"; force=""
     case "${3:-}" in --force|force) force=1 ;; esac
-    body="$(jobj session_id="$SID" role="$role" task="$task")"
+    body="$(jobj session_id="$SID" role="$role" task="$task" cwd="$PWD" host="$(hostname 2>/dev/null || echo unknown)")"
     # force is a JSON boolean, not a string — inject it raw (jobj's --arg quotes values)
     [ -n "$force" ] && body="${body%\}},\"force\":true}"
     resp="$(curl -s --max-time 5 "${AUTH[@]}" "$URL/assign" -d "$body")"
