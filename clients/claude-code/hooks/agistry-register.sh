@@ -14,6 +14,23 @@ TOK="${AGISTRY_TOKEN:-}"
 have_jq() { command -v jq >/dev/null 2>&1; }
 jget() { have_jq && printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null; }
 
+# Persist this session's desired identity locally so the heartbeat daemon can keep
+# reconciling it into the registry (self-heals after a registry wipe). Written
+# atomically (temp + rename); merges so a later `join` can add task/role.
+write_state_stub() { # $1=session_id $2=cwd $3=host
+  local dir="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}" f tmp
+  mkdir -p "$dir" 2>/dev/null || return 0
+  f="$dir/$1.json"
+  tmp="$(mktemp "$dir/.tmp.XXXXXX" 2>/dev/null)" || return 0
+  if have_jq; then
+    local base='{}'; [ -f "$f" ] && base="$(jq -c . "$f" 2>/dev/null || echo '{}')"
+    printf '%s' "$base" | jq -c --arg s "$1" --arg c "$2" --arg h "$3" \
+      '.session_id=$s | .cwd=$c | .host=$h' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" || rm -f "$tmp"
+  else
+    printf '{"session_id":"%s","cwd":"%s","host":"%s"}\n' "$1" "$2" "$3" > "$tmp" && mv -f "$tmp" "$f" || rm -f "$tmp"
+  fi
+}
+
 # Skip subagents — only top-level interactive sessions join the party.
 ATYPE="$(jget .agent_type)"
 [ -n "$ATYPE" ] && exit 0
@@ -24,6 +41,7 @@ CWD="$(jget .cwd)"; [ -z "$CWD" ] && CWD="$PWD"
 [ -z "$SID" ] && exit 0
 
 HOST="$(hostname 2>/dev/null || echo unknown)"
+write_state_stub "$SID" "$CWD" "$HOST"
 if have_jq; then
   body="$(jq -nc --arg s "$SID" --arg c "$CWD" --arg h "$HOST" '{session_id:$s,cwd:$c,host:$h}')"
 else

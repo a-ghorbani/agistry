@@ -6,8 +6,8 @@ running session.
 
 | Piece | Type | What it does |
 | --- | --- | --- |
-| `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host); nudges the agent to declare its role; starts the heartbeat daemon. |
-| `hooks/agistry-heartbeat.sh` | daemon | Pings `/heartbeat` on a timer while the Claude process is alive (so an idle session persists for days); exits + deregisters when Claude dies. |
+| `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host), writes a local desired-state file for the daemon to reconcile, nudges the agent to declare its role, and starts the heartbeat daemon. |
+| `hooks/agistry-heartbeat.sh` | daemon | Each tick **reconciles** — replays the session's full identity from the desired-state file (self-healing if the registry was wiped), which also proves liveness; surfaces a lost-`task:role` race to the agent; exits + deregisters when Claude dies. |
 | `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` and stops the heartbeat daemon when the session ends. |
 | `skills/agistry/` | Skill | One skill the agent invokes to join (record task+role), see who's around, and message peers — via an auth-wrapping CLI (`agistry.sh`). |
 | `channel/` | Channel (optional) | Live-wake: surfaces mailbox messages into a running session. See [channel/README.md](channel/README.md). |
@@ -44,18 +44,22 @@ Uninstall with `clients/claude-code/uninstall.sh`.
 - `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
 - `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
 - `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
-- `~/.claude/settings.json` → `hooks.SessionStart` (startup) + `hooks.SessionEnd`
+- `~/.claude/settings.json` → `hooks.SessionStart` (startup + resume) + `hooks.SessionEnd`
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
 
 ## Enabling the channel
 
-The channel is **not** wired automatically (by design — see
-[channel/README.md](channel/README.md) for why it must never go in `mcpServers`).
-Launch sessions that should receive live-wakes with:
+The channel is **not** wired automatically. Register it once as an MCP server (the
+`--dangerously-load-development-channels` flag takes a **name**, not a path), then
+launch live-wake sessions with an alias that sets the activation env var:
 
 ```bash
-claude --dangerously-load-development-channels server:$HOME/.claude/agistry-channel/agistry-channel.mjs
+claude mcp add -s user agistry-channel -- node "$HOME/.claude/agistry-channel/agistry-channel.mjs"
+alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'
 ```
+
+An env gate keeps it idle in every non-party session, so listing it in `mcpServers`
+is safe. See [channel/README.md](channel/README.md) for details.
 
 ## Dependencies
 

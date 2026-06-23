@@ -9,10 +9,11 @@ having to run `agistry.sh inbox` itself.
 
 It is an MCP server declaring `capabilities.experimental['claude/channel']`. Because
 agistry runs on a different host than the agents (so an inbound localhost listener
-would be unreachable), it does **not** open a port. Instead it **polls
-`GET /inbox` outbound** every few seconds and pushes each message into the session
-via `notifications/claude/channel` (it appears as `<channel source="agistry">…`).
-The agent replies through the normal skill (`agistry.sh send`).
+would be unreachable), it does **not** open a port. Instead it **peeks
+`GET /inbox?peek=1` outbound** every few seconds, pushes each message into the session
+via `notifications/claude/channel` (it appears as `<channel source="agistry">…`), and
+`/ack`s only the messages it actually delivered. The agent replies through the normal
+skill (`agistry.sh send`).
 
 Polling starts **only when `AGISTRY_CHANNEL_ACTIVE=1`** is set (the `claude-party`
 launch below sets it). The server has to be listed in `mcpServers` for the channel
@@ -56,6 +57,7 @@ polling your inbox.
 - **Latency** is the poll interval (`AGISTRY_POLL_MS`, default 4000 ms), not instant.
 - **Session id** comes from `$CLAUDE_CODE_SESSION_ID`; if a future Claude Code build
   stops exposing it to MCP subprocesses, the channel can't address its inbox.
-- **At-most-once wake**: `/inbox` marks messages delivered when read, so a transport
-  hiccup mid-push could drop a wake (the durable record still lives in agistry until
-  read; this only affects the live notification).
+- **At-least-once wake**: the channel *peeks* (`/inbox?peek=1`) and `/ack`s only the
+  messages it actually pushed, so a transport hiccup mid-push is retried on the next
+  poll rather than dropped. Identical re-pushes carry a stable `msg_id` for the agent
+  to dedupe.
