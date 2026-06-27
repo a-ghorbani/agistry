@@ -11,15 +11,18 @@
     --border:#262629; --border-soft:#1e1e21;
     --text:#ededef; --muted:#9596a0; --faint:#62636d;
     --green:#46b27f; --gray:#6b7280; --red:#dd6157; --amber:#cf9b46;
+    --cyan:#5bc8d6;
     --ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing:border-box; }
+  html, body { height:100%; }
   body { margin:0; font:13px/1.5 var(--ui); background:var(--bg); color:var(--text);
-         -webkit-font-smoothing:antialiased; }
+         -webkit-font-smoothing:antialiased; display:flex; flex-direction:column; }
 
   header { display:flex; gap:14px; align-items:center; flex-wrap:wrap;
-           padding:14px 20px; border-bottom:1px solid var(--border); background:var(--panel); }
+           padding:14px 20px; border-bottom:1px solid var(--border); background:var(--panel);
+           flex:none; z-index:5; }
   .brand { display:flex; align-items:baseline; gap:10px; }
   h1 { font-size:14px; margin:0; font-weight:600; letter-spacing:-0.01em; }
   .summary { color:var(--muted); font-size:12px; }
@@ -35,14 +38,28 @@
   button { cursor:pointer; }
   button:hover { background:var(--panel2); border-color:#3a3a40; }
   label.chk { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:12px; user-select:none; }
-  .status { padding:7px 20px; font-size:11.5px; color:var(--faint); }
+  .status { padding:7px 20px; font-size:11.5px; color:var(--faint); flex:none; }
   .status.err { color:var(--red); }
 
+  /* ---- view toggle ---- */
+  .viewtog { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--bg); }
+  .viewtog button { border:none; border-radius:0; background:transparent; color:var(--muted);
+       padding:6px 13px; font-size:12px; }
+  .viewtog button:hover { background:var(--panel2); }
+  .viewtog button.on { background:var(--hover); color:var(--text); box-shadow:inset 0 -2px 0 var(--cyan); }
+
+  /* ---- main / views ---- */
+  main { flex:1; min-height:0; position:relative; }
+  .view { position:absolute; inset:0; overflow:auto; }
+  .view[hidden] { display:none; }
+  #tableView { overflow:auto; }
+
+  /* ---- table ---- */
   table { width:100%; border-collapse:collapse; }
   th, td { text-align:left; padding:9px 14px; white-space:nowrap; vertical-align:middle; }
   thead th { color:var(--faint); font-weight:500; font-size:10.5px; letter-spacing:.06em;
        text-transform:uppercase; position:sticky; top:0; background:var(--bg);
-       border-bottom:1px solid var(--border); }
+       border-bottom:1px solid var(--border); z-index:1; }
   tbody tr.member { border-bottom:1px solid var(--border-soft); }
   tbody tr.member:hover { background:var(--hover); }
   td.path, td.host { color:var(--muted); font-family:var(--mono); font-size:12px; }
@@ -99,14 +116,56 @@
        display:flex; gap:10px; flex-wrap:wrap; }
 
   .empty { padding:64px; text-align:center; color:var(--faint); }
+
+  /* ---- graph ---- */
+  #graphView { overflow:hidden; }
+  #graphCanvas { display:block; width:100%; height:100%; cursor:grab; }
+  #graphCanvas.grabbing { cursor:grabbing; }
+  #graphCanvas.pointing { cursor:pointer; }
+
+  .graph-empty { position:absolute; inset:0; display:flex; align-items:center;
+       justify-content:center; color:var(--faint); pointer-events:none; }
+
+  .legend { position:absolute; left:16px; bottom:14px; display:flex; gap:14px; flex-wrap:wrap;
+       padding:8px 12px; background:rgba(20,20,22,.72); border:1px solid var(--border-soft);
+       border-radius:9px; backdrop-filter:blur(6px); font-size:11px; color:var(--muted);
+       pointer-events:none; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .hint { position:absolute; right:16px; bottom:14px; padding:6px 11px;
+       background:rgba(20,20,22,.72); border:1px solid var(--border-soft); border-radius:9px;
+       backdrop-filter:blur(6px); font-size:11px; color:var(--faint); pointer-events:none; }
+
+  /* node detail panel */
+  #nodePanel { position:absolute; top:14px; right:14px; width:330px; max-width:calc(100% - 28px);
+       max-height:calc(100% - 28px); overflow:auto; background:rgba(20,20,22,.92);
+       border:1px solid var(--border); border-radius:12px; backdrop-filter:blur(10px);
+       box-shadow:0 12px 40px rgba(0,0,0,.5); padding:14px 15px; }
+  #nodePanel[hidden] { display:none; }
+  .np-head { display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+  .np-role { font-size:14px; font-weight:600; }
+  .np-close { margin-left:auto; cursor:pointer; color:var(--faint); border:none; background:none;
+       font-size:16px; line-height:1; padding:2px 4px; border-radius:6px; }
+  .np-close:hover { color:var(--text); background:var(--hover); }
+  .np-grid { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:8px 0 10px;
+       font-size:12px; }
+  .np-grid dt { color:var(--faint); }
+  .np-grid dd { margin:0; color:var(--muted); font-family:var(--mono); font-size:11.5px;
+       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .np-sec { color:var(--faint); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+       margin:10px 0 4px; }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><h1>agistry</h1><span id="summary" class="summary"></span></div>
   <span class="grow"></span>
+  <div class="viewtog" id="viewtog">
+    <button data-view="graph">Graph</button>
+    <button data-view="table">Table</button>
+  </div>
   <input id="tok" type="password" placeholder="registry token" size="20">
   <label class="chk"><input id="gone" type="checkbox"> gone</label>
+  <label class="chk" id="idleWrap"><input id="idle" type="checkbox"> idle</label>
   <select id="every">
     <option value="2000">2s</option>
     <option value="5000" selected>5s</option>
@@ -116,19 +175,44 @@
   <button id="refresh">Refresh</button>
 </header>
 <div id="status" class="status"></div>
-<div id="body"></div>
+
+<main>
+  <div id="graphView" class="view">
+    <canvas id="graphCanvas"></canvas>
+    <div id="graphEmpty" class="graph-empty">no agents to plot</div>
+    <div class="legend">
+      <span><span class="dot active"></span>active</span>
+      <span><span class="dot unassigned"></span>idle</span>
+      <span><span class="dot gone"></span>gone</span>
+      <span><span class="dot pending"></span>pending msg</span>
+      <span style="color:var(--cyan)">— ◦→ live message</span>
+    </div>
+    <div class="hint">drag node · scroll zoom · click for detail</div>
+    <div id="nodePanel" hidden></div>
+  </div>
+
+  <div id="tableView" class="view" hidden>
+    <div id="body"></div>
+  </div>
+</main>
 
 <script>
 (function(){
   var tok = document.getElementById('tok');
   var gone = document.getElementById('gone');
+  var idle = document.getElementById('idle');
+  var idleWrap = document.getElementById('idleWrap');
   var every = document.getElementById('every');
   var body = document.getElementById('body');
   var statusEl = document.getElementById('status');
   var summary = document.getElementById('summary');
+  var viewtog = document.getElementById('viewtog');
+  var graphView = document.getElementById('graphView');
+  var tableView = document.getElementById('tableView');
   var timer = null;
 
   tok.value = localStorage.getItem('registry_token') || '';
+  var view = localStorage.getItem('agistry_view') || 'graph';
 
   function rel(ts){
     var s = Math.floor(Date.now()/1000) - ts;
@@ -144,8 +228,8 @@
     });
   }
 
-  var expanded = {};      // session_id -> open
-  var expandedMsg = {};   // msg_id -> open
+  var expanded = {};      // session_id -> open (table)
+  var expandedMsg = {};   // msg_id -> open (table)
   var lastAgents = { agents: [] };
   var lastMessages = [];
 
@@ -165,6 +249,9 @@
     return 'pending';
   }
 
+  // =====================================================================
+  //  TABLE VIEW
+  // =====================================================================
   function detailHtml(a){
     var ms = messagesFor(a);
     if (!ms.length) return '<div class="nomsg">no recent messages</div>';
@@ -190,10 +277,8 @@
     return out.join('');
   }
 
-  function render(){
+  function renderTable(){
     var a = lastAgents.agents || [];
-    var active = a.filter(function(x){return x.state==='active';}).length;
-    summary.textContent = a.length + ' agents · ' + active + ' active';
     if (!a.length){ body.innerHTML = '<div class="empty">no agents registered</div>'; return; }
     var rows = ['<table><thead><tr>',
       '<th></th><th>Role</th><th>State</th><th>Session</th><th>Host</th>',
@@ -227,13 +312,539 @@
     body.innerHTML = rows.join('');
   }
 
+  body.addEventListener('click', function(e){
+    var n = e.target;
+    while (n && n !== body){
+      if (n.classList && n.classList.contains('msg')){
+        var mid = n.getAttribute('data-mid');
+        if (mid){ expandedMsg[mid] = !expandedMsg[mid]; renderTable(); }
+        return;
+      }
+      if (n.classList && n.classList.contains('caret')){
+        var sid = n.getAttribute('data-sid');
+        if (sid){ expanded[sid] = !expanded[sid]; renderTable(); }
+        return;
+      }
+      n = n.parentNode;
+    }
+  });
+
+  // =====================================================================
+  //  GRAPH VIEW  — hand-rolled canvas force layout, no dependencies
+  // =====================================================================
+  var canvas = document.getElementById('graphCanvas');
+  var graphEmpty = document.getElementById('graphEmpty');
+  var nodePanel = document.getElementById('nodePanel');
+  var ctx = canvas.getContext('2d');
+
+  var COL = {
+    active:'#46b27f', unassigned:'#6b7280', gone:'#dd6157',
+    cyan:'#5bc8d6', amber:'#cf9b46', red:'#dd6157', edge:'#33343a'
+  };
+
+  var nodesById = {};     // session_id -> node (persisted across reloads for stable layout)
+  var nodes = [];         // current visible node list
+  var links = [];         // {a, b, dir:[{from,to}], msgs:[...]}  (b is target)
+  var linkByKey = {};
+  var hostCentroids = {}; // host -> {x,y,n}
+  var seenMsg = {};       // msg_id -> client perf time first observed (for pulse animation)
+  var firstLoad = true;
+
+  var cam = { x:0, y:0, scale:1, init:false };
+  var hover = null, selected = null, dragging = null, dragMoved = false;
+  var pointer = { x:0, y:0, down:false, downX:0, downY:0, panX:0, panY:0 };
+  var rafId = null, lastT = 0;
+
+  var PULSE_MS = 1500;       // travel time of a message pulse along an edge
+  var PULSE_RECENT = 45;     // server-seconds: only animate genuinely recent messages
+
+  function dpr(){ return window.devicePixelRatio || 1; }
+
+  function resizeCanvas(){
+    var r = canvas.getBoundingClientRect();
+    var d = dpr();
+    canvas.width = Math.max(1, Math.round(r.width * d));
+    canvas.height = Math.max(1, Math.round(r.height * d));
+  }
+  window.addEventListener('resize', function(){ resizeCanvas(); if (!cam.init) centerCamera(); });
+
+  function w2s(x, y){ return { x: x*cam.scale + cam.x, y: y*cam.scale + cam.y }; }
+  function s2w(x, y){ return { x: (x-cam.x)/cam.scale, y: (y-cam.y)/cam.scale }; }
+
+  function viewSize(){ var d = dpr(); return { w: canvas.width/d, h: canvas.height/d }; }
+
+  function nodeRadius(n){
+    var base = 6 + Math.min(14, n.deg * 2.2);
+    if (n.idle) base = 4.5;
+    return base;
+  }
+
+  function isIdle(a){
+    return a.state !== 'active' && !a.role && !a.host;
+  }
+
+  // resolve a message to the set of recipient session_ids that are present as nodes
+  function targetsOf(m){
+    if (m.to_session){
+      return nodesById[m.to_session] ? [m.to_session] : [];
+    }
+    if (!m.to_task) return [];
+    var out = [];
+    nodes.forEach(function(n){
+      if (n.task === m.to_task && (n.role === m.to_role || !m.to_role)) out.push(n.id);
+    });
+    return out;
+  }
+
+  function buildGraph(){
+    var agents = (lastAgents.agents || []).slice();
+    var showIdle = idle.checked;
+
+    // figure out which agents are visible
+    var visible = agents.filter(function(a){ return showIdle || !isIdle(a); });
+    var visIds = {};
+    visible.forEach(function(a){ visIds[a.session_id] = true; });
+
+    // reconcile node objects (keep positions for ones that persist)
+    var next = [];
+    nodes = []; // rebuilt below; targetsOf reads `nodes`, so set after
+    var vs = viewSize();
+    visible.forEach(function(a){
+      var n = nodesById[a.session_id];
+      if (!n){
+        // spawn near center with a little spread
+        var ang = (next.length * 2.399963); // golden angle scatter
+        var rad = 40 + next.length * 6;
+        n = { id:a.session_id, x: Math.cos(ang)*rad + (Math.random()-0.5)*20,
+              y: Math.sin(ang)*rad + (Math.random()-0.5)*20, vx:0, vy:0 };
+        nodesById[a.session_id] = n;
+      }
+      n.role = a.role || '';
+      n.task = a.task || '';
+      n.host = a.host || '';
+      n.cwd = a.cwd || '';
+      n.state = a.state || 'unassigned';
+      n.last_seen = a.last_seen;
+      n.idle = isIdle(a);
+      n.deg = 0;
+      next.push(n);
+    });
+    nodes = next;
+
+    // drop stale node objects
+    Object.keys(nodesById).forEach(function(id){ if (!visIds[id]) delete nodesById[id]; });
+
+    // build links from messages
+    links = []; linkByKey = {};
+    lastMessages.forEach(function(m){
+      var from = m.from;
+      if (!from || !nodesById[from]) return;
+      var tgts = targetsOf(m);
+      tgts.forEach(function(to){
+        if (to === from) return;
+        var key = from + '' + to;
+        var l = linkByKey[key];
+        if (!l){ l = { from:from, to:to, msgs:[] }; linkByKey[key] = l; links.push(l); }
+        l.msgs.push(m);
+        nodesById[from].deg++;
+        nodesById[to].deg++;
+      });
+    });
+
+    // stamp messages for pulse animation
+    var nowMs = performance.now();
+    var serverNow = Math.floor(Date.now()/1000);
+    lastMessages.forEach(function(m){
+      if (seenMsg[m.msg_id] != null) return;
+      if (firstLoad){
+        seenMsg[m.msg_id] = -1; // pre-existing; never pulse
+      } else if ((serverNow - m.created_at) <= PULSE_RECENT){
+        seenMsg[m.msg_id] = nowMs; // newly arrived & recent → animate
+      } else {
+        seenMsg[m.msg_id] = -1;
+      }
+    });
+    firstLoad = false;
+
+    graphEmpty.style.display = nodes.length ? 'none' : 'flex';
+
+    if (selected && !nodesById[selected]) { selected = null; nodePanel.hidden = true; }
+    if (selected) renderNodePanel(nodesById[selected]);
+
+    if (!cam.init && nodes.length) centerCamera();
+  }
+
+  function centerCamera(){
+    var vs = viewSize();
+    cam.x = vs.w/2; cam.y = vs.h/2; cam.scale = 1; cam.init = true;
+  }
+
+  // ---- physics ----
+  function step(dt){
+    var n = nodes.length;
+    if (!n) return;
+    var REPULSE = 5200, SPRING = 0.012, REST = 95, CENTER = 0.0016, HOSTPULL = 0.010, DAMP = 0.86;
+
+    // host centroids
+    hostCentroids = {};
+    nodes.forEach(function(a){
+      if (!a.host) return;
+      var c = hostCentroids[a.host] || (hostCentroids[a.host] = {x:0,y:0,n:0});
+      c.x += a.x; c.y += a.y; c.n++;
+    });
+    Object.keys(hostCentroids).forEach(function(h){ var c=hostCentroids[h]; c.x/=c.n; c.y/=c.n; });
+
+    // repulsion (O(n^2); n is small)
+    for (var i=0;i<n;i++){
+      var p = nodes[i];
+      for (var j=i+1;j<n;j++){
+        var q = nodes[j];
+        var dx = p.x-q.x, dy = p.y-q.y;
+        var d2 = dx*dx+dy*dy; if (d2 < 0.01) { dx = (Math.random()-0.5); dy=(Math.random()-0.5); d2 = 0.01; }
+        var d = Math.sqrt(d2);
+        var f = REPULSE / d2;
+        var fx = f*dx/d, fy = f*dy/d;
+        p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
+      }
+    }
+    // springs along links
+    links.forEach(function(l){
+      var p = nodesById[l.from], q = nodesById[l.to];
+      if (!p || !q) return;
+      var dx = q.x-p.x, dy = q.y-p.y;
+      var d = Math.sqrt(dx*dx+dy*dy) || 0.01;
+      var f = SPRING * (d - REST);
+      var fx = f*dx/d, fy = f*dy/d;
+      p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
+    });
+    // gravity to center + to host cluster
+    nodes.forEach(function(p){
+      p.vx += -p.x*CENTER; p.vy += -p.y*CENTER;
+      if (p.host){
+        var c = hostCentroids[p.host];
+        if (c){ p.vx += (c.x-p.x)*HOSTPULL; p.vy += (c.y-p.y)*HOSTPULL; }
+      }
+    });
+    // integrate
+    nodes.forEach(function(p){
+      if (p === dragging) { p.vx = 0; p.vy = 0; return; }
+      p.vx *= DAMP; p.vy *= DAMP;
+      var sp = Math.sqrt(p.vx*p.vx+p.vy*p.vy);
+      if (sp > 30){ p.vx = p.vx/sp*30; p.vy = p.vy/sp*30; }
+      p.x += p.vx; p.y += p.vy;
+    });
+  }
+
+  // ---- drawing ----
+  function draw(t){
+    var d = dpr();
+    ctx.setTransform(d,0,0,d,0,0);
+    var vs = viewSize();
+    ctx.clearRect(0,0,vs.w,vs.h);
+
+    drawGrid(vs);
+
+    // host cluster halos + labels
+    Object.keys(hostCentroids).forEach(function(h){
+      var c = hostCentroids[h];
+      var s = w2s(c.x, c.y);
+      // radius from member spread
+      var maxr = 70;
+      nodes.forEach(function(p){ if (p.host===h){ var dx=p.x-c.x, dy=p.y-c.y; maxr = Math.max(maxr, Math.sqrt(dx*dx+dy*dy)+40); } });
+      var rr = maxr * cam.scale;
+      var g = ctx.createRadialGradient(s.x,s.y,rr*0.2, s.x,s.y,rr);
+      g.addColorStop(0,'rgba(91,200,214,0.06)');
+      g.addColorStop(1,'rgba(91,200,214,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(s.x,s.y,rr,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(149,150,160,0.55)';
+      ctx.font = '11px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+      ctx.textAlign = 'center';
+      ctx.fillText('▦ ' + h, s.x, s.y - rr + 4);
+    });
+
+    var hoverNeighbors = {};
+    if (hover){
+      hoverNeighbors[hover.id] = true;
+      links.forEach(function(l){ if (l.from===hover.id) hoverNeighbors[l.to]=true; if (l.to===hover.id) hoverNeighbors[l.from]=true; });
+    }
+
+    // edges
+    links.forEach(function(l){
+      var p = nodesById[l.from], q = nodesById[l.to];
+      if (!p || !q) return;
+      var sp = w2s(p.x,p.y), sq = w2s(q.x,q.y);
+      var related = !hover || (hover.id===l.from || hover.id===l.to);
+      var last = l.msgs[l.msgs.length-1];
+      var st = last ? msgStatus(last) : 'delivered';
+
+      ctx.save();
+      ctx.lineWidth = related ? 1.4 : 1;
+      if (st === 'pending'){ ctx.strokeStyle = related ? 'rgba(207,155,70,0.55)' : 'rgba(207,155,70,0.18)'; ctx.setLineDash([4,4]); }
+      else if (st === 'deadletter'){ ctx.strokeStyle = related ? 'rgba(221,97,87,0.5)' : 'rgba(221,97,87,0.16)'; ctx.setLineDash([2,5]); }
+      else { ctx.strokeStyle = related ? 'rgba(91,200,214,0.32)' : 'rgba(91,200,214,0.10)'; }
+      // subtle directional brightening: draw with a gradient
+      var grad = ctx.createLinearGradient(sp.x,sp.y,sq.x,sq.y);
+      if (st==='delivered'){
+        grad.addColorStop(0, related?'rgba(91,200,214,0.05)':'rgba(91,200,214,0.03)');
+        grad.addColorStop(1, related?'rgba(91,200,214,0.40)':'rgba(91,200,214,0.12)');
+        ctx.strokeStyle = grad;
+      }
+      ctx.beginPath(); ctx.moveTo(sp.x,sp.y); ctx.lineTo(sq.x,sq.y); ctx.stroke();
+      ctx.restore();
+
+      // arrowhead near target
+      drawArrow(sp, sq, nodeRadius(q)*cam.scale + 3, related ? 0.5 : 0.18);
+
+      // live message pulses
+      l.msgs.forEach(function(m){
+        var born = seenMsg[m.msg_id];
+        if (born == null || born < 0) return;
+        var prog = (t - born) / PULSE_MS;
+        if (prog < 0 || prog > 1) return;
+        var e = prog<0.5 ? 2*prog*prog : 1-Math.pow(-2*prog+2,2)/2; // easeInOut
+        var px = sp.x + (sq.x-sp.x)*e, py = sp.y + (sq.y-sp.y)*e;
+        var alpha = Math.sin(prog*Math.PI);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.shadowColor = COL.cyan; ctx.shadowBlur = 12;
+        ctx.fillStyle = COL.cyan;
+        ctx.beginPath(); ctx.arc(px,py,3.2,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      });
+    });
+
+    // nodes
+    nodes.forEach(function(p){
+      var s = w2s(p.x,p.y);
+      var r = nodeRadius(p) * cam.scale;
+      var col = COL[p.state] || COL.unassigned;
+      var dim = hover && !hoverNeighbors[p.id];
+      var isActive = p.state === 'active';
+
+      ctx.save();
+      ctx.globalAlpha = dim ? 0.28 : 1;
+      // glow ring for active
+      if (isActive && !dim){
+        ctx.shadowColor = col; ctx.shadowBlur = 16;
+      }
+      // body
+      ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2);
+      ctx.fillStyle = p.idle ? 'rgba(107,114,128,0.5)' : col;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      // ring
+      ctx.lineWidth = (p === selected) ? 2.4 : 1.2;
+      ctx.strokeStyle = (p === selected) ? COL.cyan : 'rgba(11,11,12,0.9)';
+      ctx.stroke();
+      if (p === hover){
+        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(237,237,239,0.6)';
+        ctx.beginPath(); ctx.arc(s.x,s.y,r+3,0,Math.PI*2); ctx.stroke();
+      }
+      ctx.restore();
+
+      // label (role or short sid) — hide for idle unless zoomed/hover
+      if (!p.idle || hover===p || cam.scale > 1.4){
+        var label = p.role || (p.id||'').slice(0,6);
+        ctx.save();
+        ctx.globalAlpha = dim ? 0.3 : 0.92;
+        ctx.fillStyle = '#cfd0d6';
+        ctx.font = (p.role?'600 ':'') + '11px ' + getComputedStyle(document.body).getPropertyValue('--ui');
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(label, s.x, s.y + r + 4);
+        ctx.restore();
+      }
+    });
+  }
+
+  function drawArrow(sp, sq, backoff, alpha){
+    var dx = sq.x-sp.x, dy = sq.y-sp.y;
+    var d = Math.sqrt(dx*dx+dy*dy) || 1;
+    var ux = dx/d, uy = dy/d;
+    var tipX = sq.x - ux*backoff, tipY = sq.y - uy*backoff;
+    var size = 5;
+    var ang = Math.atan2(uy,ux);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = COL.cyan;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - size*Math.cos(ang - 0.5), tipY - size*Math.sin(ang - 0.5));
+    ctx.lineTo(tipX - size*Math.cos(ang + 0.5), tipY - size*Math.sin(ang + 0.5));
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawGrid(vs){
+    var spacing = 38 * cam.scale;
+    if (spacing < 14) spacing = spacing * Math.ceil(14/spacing);
+    var ox = cam.x % spacing, oy = cam.y % spacing;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.022)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var x=ox; x<vs.w; x+=spacing){ ctx.moveTo(x,0); ctx.lineTo(x,vs.h); }
+    for (var y=oy; y<vs.h; y+=spacing){ ctx.moveTo(0,y); ctx.lineTo(vs.w,y); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function tick(t){
+    if (!lastT) lastT = t;
+    var dt = Math.min(2, (t-lastT)/16.67); lastT = t;
+    if (view === 'graph'){
+      step(dt);
+      draw(t);
+      rafId = requestAnimationFrame(tick);
+    } else {
+      rafId = null;
+    }
+  }
+  function startGraph(){
+    resizeCanvas();
+    if (!cam.init) centerCamera();
+    if (!rafId){ lastT = 0; rafId = requestAnimationFrame(tick); }
+  }
+  function stopGraph(){ if (rafId){ cancelAnimationFrame(rafId); rafId = null; } }
+
+  // ---- interaction ----
+  function pickNode(sx, sy){
+    var best = null, bestD = Infinity;
+    for (var i=nodes.length-1;i>=0;i--){
+      var p = nodes[i];
+      var s = w2s(p.x,p.y);
+      var r = nodeRadius(p)*cam.scale + 4;
+      var dx = sx-s.x, dy = sy-s.y, dd = dx*dx+dy*dy;
+      if (dd <= r*r && dd < bestD){ bestD = dd; best = p; }
+    }
+    return best;
+  }
+  function localXY(e){
+    var r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  canvas.addEventListener('mousedown', function(e){
+    var p = localXY(e);
+    pointer.down = true; pointer.downX = p.x; pointer.downY = p.y;
+    pointer.panX = cam.x; pointer.panY = cam.y;
+    dragMoved = false;
+    var hit = pickNode(p.x,p.y);
+    dragging = hit;
+    canvas.classList.add('grabbing');
+  });
+  window.addEventListener('mousemove', function(e){
+    var p = localXY(e);
+    pointer.x = p.x; pointer.y = p.y;
+    if (pointer.down){
+      var ddx = p.x-pointer.downX, ddy = p.y-pointer.downY;
+      if (Math.abs(ddx)+Math.abs(ddy) > 3) dragMoved = true;
+      if (dragging){
+        var wpt = s2w(p.x,p.y);
+        dragging.x = wpt.x; dragging.y = wpt.y; dragging.vx = 0; dragging.vy = 0;
+      } else {
+        cam.x = pointer.panX + ddx; cam.y = pointer.panY + ddy;
+      }
+    } else if (view==='graph'){
+      hover = pickNode(p.x,p.y);
+      canvas.classList.toggle('pointing', !!hover);
+    }
+  });
+  window.addEventListener('mouseup', function(e){
+    if (pointer.down && !dragMoved){
+      var hit = dragging || pickNode(pointer.x, pointer.y);
+      if (hit){ selected = hit.id; renderNodePanel(hit); nodePanel.hidden = false; }
+      else { selected = null; nodePanel.hidden = true; }
+    }
+    pointer.down = false; dragging = null;
+    canvas.classList.remove('grabbing');
+  });
+  canvas.addEventListener('wheel', function(e){
+    e.preventDefault();
+    var p = localXY(e);
+    var before = s2w(p.x,p.y);
+    var k = Math.exp(-e.deltaY * 0.0014);
+    cam.scale = Math.max(0.3, Math.min(3.5, cam.scale*k));
+    var after = w2s(before.x, before.y);
+    cam.x += p.x - after.x; cam.y += p.y - after.y;
+  }, { passive:false });
+
+  function renderNodePanel(n){
+    if (!n){ nodePanel.hidden = true; return; }
+    var a = { session_id:n.id, task:n.task, role:n.role, host:n.host, cwd:n.cwd, state:n.state, last_seen:n.last_seen };
+    var ms = messagesFor(a).slice(0, 12);
+    var h = ['<div class="np-head">',
+      '<span class="dot ' + esc(n.state) + '"></span>',
+      '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>',
+      '<button class="np-close" id="npClose">×</button></div>'];
+    h.push('<dl class="np-grid">');
+    h.push('<dt>state</dt><dd>' + esc(n.state) + '</dd>');
+    h.push('<dt>task</dt><dd title="'+esc(n.task)+'">' + esc(n.task || '—') + '</dd>');
+    h.push('<dt>host</dt><dd title="'+esc(n.host)+'">' + esc(n.host || '—') + '</dd>');
+    h.push('<dt>session</dt><dd title="'+esc(n.id)+'">' + esc((n.id||'').slice(0,16)) + '</dd>');
+    h.push('<dt>cwd</dt><dd title="'+esc(n.cwd)+'">' + esc(n.cwd || '—') + '</dd>');
+    h.push('<dt>seen</dt><dd>' + rel(n.last_seen) + ' ago</dd>');
+    h.push('</dl>');
+    h.push('<div class="np-sec">messages · ' + ms.length + '</div>');
+    if (!ms.length) h.push('<div class="nomsg">no recent messages</div>');
+    else {
+      h.push('<div class="msgs">');
+      ms.forEach(function(m){
+        var outgoing = m.from === n.id;
+        var whoFull = outgoing ? (m.to_session || ((m.to_task||'')+':'+(m.to_role||''))) : (m.from||'');
+        var who = outgoing ? (m.to_session ? m.to_session.slice(0,8) : ((m.to_task||'')+':'+(m.to_role||''))) : (m.from||'').slice(0,8);
+        var st = msgStatus(m);
+        h.push('<div class="msg" style="grid-template-columns:36px 14px 1fr 12px; cursor:default">' +
+          '<span class="m-time">' + rel(m.created_at) + '</span>' +
+          '<span class="m-dir' + (outgoing?' out':'') + '">' + (outgoing?'↗':'↙') + '</span>' +
+          '<span class="m-who" title="'+esc(whoFull)+'">' + esc(who) + '</span>' +
+          '<span class="dot ' + st + '" title="'+st+'"></span>' +
+          '<div class="m-full" style="margin-top:2px">' + esc((m.body||'').slice(0,400)) + ((m.body||'').length>400?'…':'') + '</div>' +
+        '</div>');
+      });
+      h.push('</div>');
+    }
+    nodePanel.innerHTML = h.join('');
+    var cl = document.getElementById('npClose');
+    if (cl) cl.onclick = function(){ selected = null; nodePanel.hidden = true; };
+  }
+
+  // =====================================================================
+  //  VIEW SWITCH + DATA LOAD
+  // =====================================================================
+  function applyView(){
+    var graph = view === 'graph';
+    graphView.hidden = !graph;
+    tableView.hidden = graph;
+    idleWrap.style.display = graph ? '' : 'none';
+    Array.prototype.forEach.call(viewtog.children, function(b){
+      b.classList.toggle('on', b.getAttribute('data-view') === view);
+    });
+    localStorage.setItem('agistry_view', view);
+    if (graph){ buildGraph(); startGraph(); }
+    else { stopGraph(); renderTable(); }
+  }
+  viewtog.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    view = b.getAttribute('data-view'); applyView();
+  });
+
+  function render(){
+    var a = lastAgents.agents || [];
+    var active = a.filter(function(x){return x.state==='active';}).length;
+    var hosts = {}; a.forEach(function(x){ if (x.host) hosts[x.host]=1; });
+    var nh = Object.keys(hosts).length;
+    summary.textContent = a.length + ' agents · ' + active + ' active' + (nh? ' · ' + nh + ' host' + (nh>1?'s':'') : '');
+    if (view === 'graph'){ buildGraph(); }
+    else { renderTable(); }
+  }
+
   function load(){
     var t = tok.value.trim();
     localStorage.setItem('registry_token', t);
     var url = '/agents' + (gone.checked ? '?all=1' : '');
     Promise.all([
       fetch(url, { headers: { 'X-Registry-Token': t } }).then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
-      fetch('/messages?limit=100', { headers: { 'X-Registry-Token': t } }).then(function(r){ return r.ok ? r.json() : {messages:[]}; })
+      fetch('/messages?limit=200', { headers: { 'X-Registry-Token': t } }).then(function(r){ return r.ok ? r.json() : {messages:[]}; })
     ]).then(function(res){
       lastAgents = res[0]; lastMessages = res[1].messages || [];
       render();
@@ -250,25 +861,12 @@
   }
 
   document.getElementById('refresh').onclick = load;
-  body.addEventListener('click', function(e){
-    var n = e.target;
-    while (n && n !== body){
-      if (n.classList && n.classList.contains('msg')){
-        var mid = n.getAttribute('data-mid');
-        if (mid){ expandedMsg[mid] = !expandedMsg[mid]; render(); }
-        return;
-      }
-      if (n.classList && n.classList.contains('caret')){
-        var sid = n.getAttribute('data-sid');
-        if (sid){ expanded[sid] = !expanded[sid]; render(); }
-        return;
-      }
-      n = n.parentNode;
-    }
-  });
   every.onchange = schedule;
   gone.onchange = load;
+  idle.onchange = function(){ if (view==='graph') buildGraph(); };
   tok.onchange = load;
+
+  applyView();
   load(); schedule();
 })();
 </script>
