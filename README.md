@@ -15,6 +15,12 @@ state, an embedded web dashboard.
 └─────────────┘                                        └─────────────┘
 ```
 
+![agistry dashboard — force-directed graph of agents grouped by host, with a selected agent's task, session, and message history in the side panel](docs/dashboard.png)
+
+The dashboard groups live agents by host, draws message handoffs as links, and
+opens a side panel with each agent's task, session, cwd, and recent messages.
+Toggle the **Graph / Table** views, filter `gone`/`idle`, and auto-refresh.
+
 ## Why
 
 Coordinating several long-lived agents needs three things: a place to **register**
