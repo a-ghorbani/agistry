@@ -5,19 +5,20 @@
 # from any directory.
 #
 # Usage:
-#   ./install.sh [--url http://HOST:7070] [--token TOKEN] [--with-channel]
+#   ./install.sh [--url http://HOST:7070] [--token TOKEN] [--with-channel] [--with-statusline]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 CFG="$HOME/.config/agistry/client.env"
 
-URL=""; TOKEN=""; WITH_CHANNEL=0
+URL=""; TOKEN=""; WITH_CHANNEL=0; WITH_STATUSLINE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) URL="${2:?}"; shift 2 ;;
     --token) TOKEN="${2:?}"; shift 2 ;;
     --with-channel) WITH_CHANNEL=1; shift ;;
+    --with-statusline) WITH_STATUSLINE=1; shift ;;
     -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -90,6 +91,30 @@ if [ "$WITH_CHANNEL" = 1 ]; then
   echo "    claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
   echo "  Then add this alias (the env var gates polling so it stays idle in normal sessions):"
   echo "    alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
+fi
+
+# 6. optional status line. Opt-in because settings.json holds a SINGLE .statusLine —
+#    unlike the hook arrays, wiring it clobbers any existing custom status line, so
+#    we only touch it when the user explicitly asks.
+if [ "$WITH_STATUSLINE" = 1 ]; then
+  SL="$CLAUDE_DIR/statusline/agistry-statusline.sh"
+  mkdir -p "$CLAUDE_DIR/statusline"
+  install -m 0755 "$HERE/statusline/agistry-statusline.sh" "$SL"
+  echo "  statusline -> $SL"
+  if command -v jq >/dev/null 2>&1; then
+    [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+    PREV="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
+    if [ -n "$PREV" ] && [ "$PREV" != "$SL" ]; then
+      echo "  NOTE: replacing an existing statusLine command ($PREV) — backup saved."
+    fi
+    cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
+    tmp="$(mktemp)"
+    jq --arg sl "$SL" '.statusLine = {type:"command", command:$sl}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    echo "  statusLine wired into $SETTINGS (backup saved)"
+  else
+    echo "  jq not found — add this to $SETTINGS by hand:"
+    echo "    \"statusLine\": { \"type\": \"command\", \"command\": \"$SL\" }"
+  fi
 fi
 
 echo

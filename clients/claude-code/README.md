@@ -11,6 +11,7 @@ running session.
 | `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` and stops the heartbeat daemon when the session ends. |
 | `skills/agistry/` | Skill | One skill the agent invokes to join (record task+role), see who's around, and message peers — via an auth-wrapping CLI (`agistry.sh`). |
 | `channel/` | Channel (optional) | Live-wake: surfaces mailbox messages into a running session. See [channel/README.md](channel/README.md). |
+| `statusline/agistry-statusline.sh` | Status line (optional) | Shows the session's registration in the Claude Code TUI status bar — `🏷 role · task` once joined, `📁 <dir> · (not joined)` before. Reads the same per-session state file. |
 
 The hook can only know *identity* (it fires before any conversation); *role* is
 semantic, so the agent declares it via the skill. The hook seeds the trigger by
@@ -32,6 +33,14 @@ Add `--with-channel` to also install the live-wake channel (runs `npm install`):
 clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-channel
 ```
 
+Add `--with-statusline` to show each session's `role · task` in the Claude Code
+status bar. It's opt-in because `settings.json` holds a **single** `.statusLine`, so
+wiring it replaces any status line you already have (a backup is saved either way):
+
+```bash
+clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-statusline
+```
+
 That's it — being in `~/.claude/settings.json` (user scope), the hooks apply to
 **every** Claude Code session on the machine. Start a fresh session and it appears
 in the dashboard; when the agent learns its role it calls the `agistry` skill and
@@ -46,6 +55,7 @@ Uninstall with `clients/claude-code/uninstall.sh`.
 - `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
 - `~/.claude/settings.json` → `hooks.SessionStart` (startup + resume) + `hooks.SessionEnd`
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
+- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
 
 ## Enabling the channel
 
