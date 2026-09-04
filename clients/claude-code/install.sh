@@ -46,6 +46,10 @@ if [ -d "$HERE/../providers" ]; then
     [ -e "$f" ] || continue
     install -m 0755 "$f" "$CLAUDE_DIR/providers/$(basename "$f")"
   done
+  for f in "$HERE"/../providers/*.service; do
+    [ -e "$f" ] || continue
+    install -m 0644 "$f" "$CLAUDE_DIR/providers/$(basename "$f")"
+  done
   echo "  providers -> $CLAUDE_DIR/providers/ (none run until AGISTRY_PROVIDERS is set)"
 fi
 
