@@ -1,0 +1,28 @@
+# Run ONE agistry resource provider under systemd supervision, foreground, so systemd
+# is the thing that notices it died and restarts it:
+#
+#   cp agistry-provider@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agistry-provider@adb
+#
+# The instance name is the provider: agistry-provider@adb runs agistry-adb-provider.sh.
+# This is the preferred path on a host that permanently owns devices — it starts at
+# boot and does not depend on anyone opening a Claude session.
+#
+# Use EITHER this or the session autostart (AGISTRY_PROVIDERS_AUTOSTART=1), not both:
+# systemd supervises this copy directly and knows nothing about the launcher's pidfile,
+# so running both would announce the same devices twice. Harmless (registration is an
+# idempotent upsert) but pointless.
+[Unit]
+Description=agistry %i resource provider (announce this host's %i devices)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.claude/providers/agistry-%i-provider.sh --loop
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

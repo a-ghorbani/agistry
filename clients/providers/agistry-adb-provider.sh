@@ -22,9 +22,19 @@ HOST="$(hostname 2>/dev/null || echo unknown)"
 # generous cap. It is a backstop against an agent that is alive but has wandered off,
 # not a normal expiry -- the usual release is the holder finishing, or its session dying.
 MAX_HOLD="${AGISTRY_ADB_MAX_HOLD:-21600}"   # 6h
-INTERVAL="${2:-300}"
+INTERVAL="${2:-${AGISTRY_PROVIDER_INTERVAL:-300}}"
 
-command -v adb >/dev/null 2>&1 || { echo "adb not found in PATH" >&2; exit 1; }
+# A service manager's PATH is not a login shell's. Take an explicit AGISTRY_ADB if the
+# host sets one, then the SDK locations, then PATH.
+ADB="${AGISTRY_ADB:-}"
+if [ -z "$ADB" ]; then
+  for cand in "${ANDROID_HOME:-}/platform-tools/adb" "${ANDROID_SDK_ROOT:-}/platform-tools/adb" \
+              "$HOME/Android/Sdk/platform-tools/adb"; do
+    [ -x "$cand" ] && { ADB="$cand"; break; }
+  done
+fi
+[ -z "$ADB" ] && ADB="$(command -v adb 2>/dev/null)"
+[ -n "$ADB" ] || { echo "adb not found (set AGISTRY_ADB or ANDROID_HOME)" >&2; exit 1; }
 
 announce_once() {
   local serial state model device n=0
@@ -41,7 +51,7 @@ announce_once() {
         meta:{serial:$s, model:$n, device:$d}}')"
     curl -sf --max-time 5 -H "X-Registry-Token: $TOK" "$URL/resources/register" \
          -d "$body" >/dev/null 2>&1 && n=$((n+1))
-  done < <(adb devices -l 2>/dev/null)
+  done < <("$ADB" devices -l 2>/dev/null)
   echo "announced $n device(s) to $URL"
 }
 

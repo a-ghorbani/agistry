@@ -13,6 +13,7 @@ Re-announcing revives them, so unplugging and replugging a device heals on its o
 | Script | Announces |
 | --- | --- |
 | `agistry-providers.sh` | Launcher — starts only the providers this host is configured for |
+| `agistry-provider@.service` | systemd user unit template — one supervised provider per instance |
 | `agistry-adb-provider.sh` | Android devices reachable via `adb devices -l` on this host |
 
 ## Nothing runs unless you configure it
@@ -24,6 +25,7 @@ is **none**. Providers are named in `~/.config/agistry/client.env`:
 AGISTRY_PROVIDERS="adb"          # space/comma separated; unset or empty = none run
 AGISTRY_PROVIDER_INTERVAL=300    # re-announce cadence, seconds
 AGISTRY_ADB_MAX_HOLD=21600       # 6h cap on a single hold of a phone
+AGISTRY_ADB=/path/to/adb         # optional; else ANDROID_HOME, the SDK, then PATH
 ```
 
 The launcher is idempotent — a pidfile guard means one daemon per provider per host,
@@ -39,12 +41,18 @@ agistry-providers.sh stop
 Two ways to get them running, both opt-in:
 
 - **User service (preferred on a host that permanently owns devices).** Copy
-  `agistry-providers.service` to `~/.config/systemd/user/` and
-  `systemctl --user enable --now agistry-providers`. Starts at boot, restarts on
-  failure, does not depend on anyone opening a Claude session.
+  `agistry-provider@.service` to `~/.config/systemd/user/` and
+  `systemctl --user enable --now agistry-provider@adb` — the instance name is the
+  provider. It runs the provider in the foreground so **systemd** is what notices it
+  died and restarts it; it starts at boot and does not depend on anyone opening a
+  Claude session.
 - **Session autostart.** Set `AGISTRY_PROVIDERS_AUTOSTART=1` as well, and the
   SessionStart hook calls the launcher. Both gates must be set, so a host that has
   not asked for providers never spawns one.
+
+Use **one or the other**. systemd supervises its copy directly and knows nothing about
+the launcher's pidfile, so enabling both announces the same devices twice — harmless,
+since registration is an idempotent upsert, but pointless.
 
 You can also run a single provider directly, without the launcher:
 
