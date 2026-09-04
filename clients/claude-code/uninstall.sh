@@ -29,7 +29,9 @@ else
 fi
 
 rm -f "$CLAUDE_DIR/hooks/agistry-register.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh" "$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
-rm -rf "$CLAUDE_DIR/skills/agistry" "$CLAUDE_DIR/agistry-channel" "$CLAUDE_DIR/statusline"
-echo "  removed hooks, skill, channel, and statusline"
+# stop any provider daemons before removing the launcher that knows their pidfiles
+[ -x "$CLAUDE_DIR/providers/agistry-providers.sh" ] && "$CLAUDE_DIR/providers/agistry-providers.sh" stop >/dev/null 2>&1
+rm -rf "$CLAUDE_DIR/skills/agistry" "$CLAUDE_DIR/agistry-channel" "$CLAUDE_DIR/statusline" "$CLAUDE_DIR/providers"
+echo "  removed hooks, skill, channel, statusline, and providers"
 echo "  left ~/.config/agistry/client.env in place (delete it yourself if you want)"
 echo "Done."

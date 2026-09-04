@@ -12,14 +12,45 @@ Re-announcing revives them, so unplugging and replugging a device heals on its o
 
 | Script | Announces |
 | --- | --- |
+| `agistry-providers.sh` | Launcher — starts only the providers this host is configured for |
 | `agistry-adb-provider.sh` | Android devices reachable via `adb devices -l` on this host |
 
-```bash
-# one pass
-./agistry-adb-provider.sh
+## Nothing runs unless you configure it
 
-# keep refreshing (systemd timer, cron, or a plain loop)
-./agistry-adb-provider.sh --loop 300
+Most hosts have no devices attached and should run no provider at all, so the default
+is **none**. Providers are named in `~/.config/agistry/client.env`:
+
+```sh
+AGISTRY_PROVIDERS="adb"          # space/comma separated; unset or empty = none run
+AGISTRY_PROVIDER_INTERVAL=300    # re-announce cadence, seconds
+AGISTRY_ADB_MAX_HOLD=21600       # 6h cap on a single hold of a phone
+```
+
+The launcher is idempotent — a pidfile guard means one daemon per provider per host,
+however many times it is called:
+
+```bash
+agistry-providers.sh list      # what exists, and what this host enables
+agistry-providers.sh start     # start the enabled ones (no-op if unset)
+agistry-providers.sh status
+agistry-providers.sh stop
+```
+
+Two ways to get them running, both opt-in:
+
+- **User service (preferred on a host that permanently owns devices).** Copy
+  `agistry-providers.service` to `~/.config/systemd/user/` and
+  `systemctl --user enable --now agistry-providers`. Starts at boot, restarts on
+  failure, does not depend on anyone opening a Claude session.
+- **Session autostart.** Set `AGISTRY_PROVIDERS_AUTOSTART=1` as well, and the
+  SessionStart hook calls the launcher. Both gates must be set, so a host that has
+  not asked for providers never spawns one.
+
+You can also run a single provider directly, without the launcher:
+
+```bash
+./agistry-adb-provider.sh            # one pass
+./agistry-adb-provider.sh --loop 300 # keep refreshing
 ```
 
 Devices are keyed by adb serial (`adb:R5CT21…`) because that is what the tooling already

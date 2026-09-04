@@ -170,9 +170,10 @@ the collision still happens and now nothing detects it.
 - **Discovery belongs to the provider, not the server.** A phone is attached to a
   *host*, not to the registry, so only something running on that host can see it.
   `clients/providers/agistry-adb-provider.sh` is the reference: it runs `adb devices`
-  and posts what it finds, on a loop, so devices appear and age out with reality. Static
-  things with nobody to announce them (a staging URL, a quota) go in
-  `REGISTRY_RESOURCES_FILE`.
+  and posts what it finds, on a loop, so devices appear and age out with reality.
+  Providers are **opt-in per host** — nothing starts unless `AGISTRY_PROVIDERS` names
+  it, since most hosts have no devices attached. Static things with nobody to announce
+  them (a staging URL, a quota) go in `REGISTRY_RESOURCES_FILE` instead.
 
 ```bash
 agistry.sh resources free                      # what is available

@@ -39,6 +39,16 @@ install -m 0644 "$HERE/skills/agistry/SKILL.md"   "$CLAUDE_DIR/skills/agistry/SK
 install -m 0755 "$HERE/skills/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
 echo "  skill  -> $CLAUDE_DIR/skills/agistry/"
 
+# 2b. resource providers (inert unless AGISTRY_PROVIDERS names one — see below)
+if [ -d "$HERE/../providers" ]; then
+  mkdir -p "$CLAUDE_DIR/providers"
+  for f in "$HERE"/../providers/*.sh; do
+    [ -e "$f" ] || continue
+    install -m 0755 "$f" "$CLAUDE_DIR/providers/$(basename "$f")"
+  done
+  echo "  providers -> $CLAUDE_DIR/providers/ (none run until AGISTRY_PROVIDERS is set)"
+fi
+
 # 3. config (only written if --url/--token given, or if missing)
 if [ -n "$URL" ] || [ -n "$TOKEN" ]; then
   mkdir -p "$(dirname "$CFG")"
