@@ -1,6 +1,6 @@
 ---
 name: agistry
-description: Coordinate with other agents via the agistry registry — join (declare this session's task + role), see who else is working, and message/hand off to other agents. Invoke once autonomously as soon as it is clear what your task is to join the party; also use whenever you need to see other agents or send a handoff. All calls go through a local CLI that injects auth, so never curl the registry or handle the token yourself.
+description: Coordinate with other agents via the agistry registry — join (declare this session's task + role), see who else is working, message/hand off to other agents, and claim shared exclusive resources (a phone, a GPU, a staging env) so sessions do not collide on them. Invoke once autonomously as soon as it is clear what your task is to join the party; also use whenever you need to see other agents or send a handoff. All calls go through a local CLI that injects auth, so never curl the registry or handle the token yourself.
 ---
 
 # agistry
@@ -37,6 +37,25 @@ agistry coordinates **separate, independently-launched top-level sessions** (e.g
 | `heartbeat` | `POST /heartbeat` | Mark yourself still alive (the registry ages out silent agents). |
 | `register [cwd]` | `POST /register` | Identity stub — the SessionStart hook normally does this; manual fallback only. |
 | `leave` | `POST /deregister` | Mark yourself gone (the SessionEnd hook normally does this). |
+| `resources [free\|held\|<kind>]` | `GET /resources` | What exists, who holds it, and what the last holder left on it. |
+| `claim <id> [ttl] [note]` | `POST /resources/claim` | Take it exclusively before you touch it; put what you are about to install/change in `note`. |
+| `renew <id> [ttl]` | `POST /resources/renew` | Extend your hold (capped). |
+| `release <id> [note]` | `POST /resources/release` | Hand it back, recording what you left on it. |
+| `provide <id> <kind> [name] [max-hold]` | `POST /resources/register` | Announce a resource this host can see (providers do this, not agents). |
+
+### Shared devices
+
+Claim before you touch a shared device; release when done, saying what you left on it:
+
+```bash
+agistry.sh resources free
+agistry.sh claim adb:R5CT21 21600 "installing app-debug sha256:deadbeef"
+agistry.sh release adb:R5CT21 "left app-debug sha256:deadbeef resident"
+```
+
+If it is held, the 409 names the holder — **ask, never force**: `agistry.sh send POC-94:e2e "need adb:R5CT21 — done with it?"`
+
+A lease is **advisory**: it stops collisions, it does not prove the device's state. Keep verifying whatever you already verify.
 
 ## The task-tag
 

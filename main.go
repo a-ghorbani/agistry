@@ -42,7 +42,7 @@ var (
 
 const (
 	maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
-	maxTaskLen   = 40       // a task is a short grouping tag, not a description
+	maxTaskLen   = 40      // a task is a short grouping tag, not a description
 )
 
 func now() int64 { return time.Now().Unix() }
@@ -69,6 +69,8 @@ func main() {
 	token = os.Getenv("REGISTRY_TOKEN")
 	ttl = envInt("REGISTRY_TTL_SECONDS", 600)
 	pendingTTL = envInt("REGISTRY_PENDING_TTL_SECONDS", 604800) // 7d: pending handoffs may wait days
+	resourceTTL = envInt("REGISTRY_RESOURCE_TTL_SECONDS", 900)  // provider silence before a resource is presumed gone
+	leaseMaxHold = envInt("REGISTRY_LEASE_MAX_HOLD_SECONDS", 3600)
 
 	var err error
 	db, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
@@ -80,12 +82,19 @@ func main() {
 		log.Fatalf("init schema: %v", err)
 	}
 
+	if f := os.Getenv("REGISTRY_RESOURCES_FILE"); f != "" {
+		if err := loadResourceFile(f); err != nil {
+			log.Fatalf("load resources file: %v", err)
+		}
+	}
+
 	go reaper()
 
 	if token == "" {
 		log.Println("WARNING: REGISTRY_TOKEN unset — auth disabled (dev only)")
 	}
-	log.Printf("agistry listening on %s (db=%s ttl=%ds pending_ttl=%ds)", addr, dbPath, ttl, pendingTTL)
+	log.Printf("agistry listening on %s (db=%s ttl=%ds pending_ttl=%ds resource_ttl=%ds lease_max_hold=%ds)",
+		addr, dbPath, ttl, pendingTTL, resourceTTL, leaseMaxHold)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           routes(),
@@ -109,6 +118,12 @@ func routes() http.Handler {
 	mux.HandleFunc("/inbox", auth(handleInbox))
 	mux.HandleFunc("/ack", auth(handleAck))
 	mux.HandleFunc("/messages", auth(handleMessages))
+	mux.HandleFunc("/resources", auth(handleResources))
+	mux.HandleFunc("/resources/register", auth(handleResourceRegister))
+	mux.HandleFunc("/resources/deregister", auth(handleResourceDeregister))
+	mux.HandleFunc("/resources/claim", auth(handleResourceClaim))
+	mux.HandleFunc("/resources/renew", auth(handleResourceRenew))
+	mux.HandleFunc("/resources/release", auth(handleResourceRelease))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("/", handleUI) // unauthenticated page shell; data calls carry the token
 	return mux
@@ -145,6 +160,35 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_pending ON messages(to_session, to_task, to_role)
   WHERE delivered_at IS NULL AND dead_lettered_at IS NULL;
+-- A resource is a thing agents contend for (a phone, a GPU, a staging env). It is
+-- announced by whoever can see it -- the server never discovers resources itself,
+-- since a device is attached to a host, not to the registry.
+CREATE TABLE IF NOT EXISTS resources (
+  id            TEXT PRIMARY KEY,   -- the key the tooling already uses (e.g. an adb serial)
+  kind          TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL DEFAULT '',
+  host          TEXT NOT NULL DEFAULT '',
+  meta          TEXT NOT NULL DEFAULT '',      -- opaque; agistry never reads inside it
+  source        TEXT NOT NULL DEFAULT 'api',   -- 'api' (provider) | 'config' (seed file)
+  max_hold      INTEGER NOT NULL DEFAULT 0,    -- 0 = server default
+  state         TEXT NOT NULL DEFAULT 'online',
+  registered_at INTEGER NOT NULL DEFAULT 0,
+  last_seen     INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS leases (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  resource_id TEXT NOT NULL,
+  holder      TEXT NOT NULL,                 -- session_id
+  note        TEXT NOT NULL DEFAULT '',      -- opaque; survives release as the durable record
+  acquired_at INTEGER NOT NULL DEFAULT 0,
+  expires_at  INTEGER NOT NULL DEFAULT 0,
+  released_at INTEGER,                       -- NULL = standing; set rows are history
+  released_by TEXT NOT NULL DEFAULT ''       -- holder | expired | holder-gone | resource-gone
+);
+-- one standing lease per resource; the DB enforces exclusivity atomically instead of
+-- a racy check-then-act, exactly as idx_agents_taskrole does for (task,role).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active ON leases(resource_id) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_lease_history ON leases(resource_id, released_at);
 `)
 	return err
 }
@@ -179,8 +223,10 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func ok(w http.ResponseWriter, v any)       { writeJSON(w, http.StatusOK, v) }
-func bad(w http.ResponseWriter, msg string) { writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg}) }
+func ok(w http.ResponseWriter, v any) { writeJSON(w, http.StatusOK, v) }
+func bad(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+}
 func conflict(w http.ResponseWriter, v any) { writeJSON(w, http.StatusConflict, v) }
 func fail(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -677,6 +723,7 @@ func reapOnce(t int64) {
 	if _, err := db.Exec(`DELETE FROM messages WHERE dead_lettered_at IS NOT NULL AND dead_lettered_at < ?`, t-pendingTTL); err != nil {
 		log.Printf("reaper dead-letter gc: %v", err)
 	}
+	reapResources(t)
 }
 
 func reaper() {

@@ -69,6 +69,17 @@ if [ -x "$HB" ] && { [ ! -f "$PIDFILE" ] || ! kill -0 "$(cat "$PIDFILE" 2>/dev/n
   echo $! > "$PIDFILE"
 fi
 
+# Optionally start this host's resource providers. Two gates, both default off, so a
+# machine with no devices attached (the common case) starts no extra process: the host
+# must both name providers in AGISTRY_PROVIDERS and opt into session autostart. A
+# pidfile guard inside the launcher keeps it to one daemon per provider per host no
+# matter how many sessions call it. On a host that permanently owns devices, prefer the
+# user service in clients/providers/ over this.
+if [ -n "${AGISTRY_PROVIDERS:-}" ] && [ "${AGISTRY_PROVIDERS_AUTOSTART:-0}" = "1" ]; then
+  PROV="$HOME/.claude/providers/agistry-providers.sh"
+  [ -x "$PROV" ] && nohup "$PROV" start >/dev/null 2>&1 &
+fi
+
 # SessionStart stdout is injected into the agent's context — seed the role-register trigger.
 cat <<NUDGE
 [agistry] This session ($SID) joined the agent registry at $URL.

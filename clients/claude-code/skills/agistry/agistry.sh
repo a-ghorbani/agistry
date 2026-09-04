@@ -10,6 +10,11 @@
 #   agistry.sh send <to> <msg>                   # message TASK:role or session -> /send
 #   agistry.sh inbox                             # drain THIS session's mailbox -> /inbox
 #   agistry.sh heartbeat                         # keep THIS session alive       -> /heartbeat
+#   agistry.sh resources [free|held|<kind>]      # the resource board            -> /resources
+#   agistry.sh claim <id> [ttl-sec] [note]       # take a resource exclusively   -> /resources/claim
+#   agistry.sh renew <id> [ttl-sec]              # extend YOUR hold              -> /resources/renew
+#   agistry.sh release <id> [note]               # hand it back (+ leave a note) -> /resources/release
+#   agistry.sh provide <id> <kind> [name] [max-hold-sec]  # announce a resource  -> /resources/register
 #   agistry.sh register [cwd]                    # identity stub (hook does this) -> /register
 #   agistry.sh leave                             # mark THIS session gone         -> /deregister
 set -uo pipefail
@@ -53,6 +58,13 @@ jobj() {
 }
 
 need_sid() { [ -n "$SID" ] || { echo '{"error":"CLAUDE_CODE_SESSION_ID not set"}'; exit 1; }; }
+
+# jobj quotes every value as a JSON string; ttl/max_hold must go over the wire as
+# numbers, so splice them in raw after validating they really are digits.
+add_num() { # $1=json $2=key $3=value  -> json with "key":value appended
+  case "$3" in ''|*[!0-9]*) printf '%s' "$1"; return ;; esac
+  printf '%s,"%s":%s}' "${1%\}}" "$2" "$3"
+}
 
 # Stable content-derived message id so a retried send dedupes (server is INSERT OR
 # IGNORE on msg_id). Identical messages to the same target collapse to one — fine for
@@ -105,6 +117,47 @@ case "$cmd" in
     need_sid; post /heartbeat "$(jobj session_id="$SID")" ;;
   leave|deregister)
     need_sid; post /deregister "$(jobj session_id="$SID")" ;;
+
+  # ---- resources: exclusive things (a phone, a GPU, a staging env) --------------
+  # A lease is advisory. It stops lanes colliding; it proves nothing about the state
+  # of the resource, so keep verifying whatever you were verifying before.
+  resources|res|board)
+    case "${1:-}" in
+      '')      get "/resources" ;;
+      free)    get "/resources?free=1" ;;
+      held)    get "/resources?held=1" ;;
+      all)     get "/resources?all=1" ;;
+      *)       get "/resources?kind=$1" ;;
+    esac ;;
+  claim)
+    need_sid
+    rid="${1:?resource id required (see: agistry.sh resources)}"
+    # ttl is optional and sits before note, so accept `claim <id> <note>` too: a
+    # non-numeric second argument is a note, not a ttl. Without this the note is
+    # silently swallowed by add_num, and the note is the whole point.
+    ttl=""; note=""
+    case "${2:-}" in
+      '')       : ;;
+      *[!0-9]*) note="$2" ;;
+      *)        ttl="$2"; note="${3:-}" ;;
+    esac
+    body="$(jobj resource_id="$rid" session_id="$SID" note="$note")"
+    post /resources/claim "$(add_num "$body" ttl_seconds "$ttl")" ;;
+  renew)
+    need_sid
+    rid="${1:?resource id required}"; ttl="${2:-}"
+    body="$(jobj resource_id="$rid" session_id="$SID")"
+    post /resources/renew "$(add_num "$body" ttl_seconds "$ttl")" ;;
+  release)
+    need_sid
+    rid="${1:?resource id required}"; note="${2:-}"
+    post /resources/release "$(jobj resource_id="$rid" session_id="$SID" note="$note")" ;;
+  provide)
+    rid="${1:?resource id required}"; kind="${2:?kind required}"; name="${3:-}"; mh="${4:-}"
+    body="$(jobj id="$rid" kind="$kind" name="$name" host="$(hostname 2>/dev/null || echo unknown)")"
+    post /resources/register "$(add_num "$body" max_hold_seconds "$mh")" ;;
+  unprovide)
+    post /resources/deregister "$(jobj id="${1:?resource id required}")" ;;
   *)
-    sed -n '2,20p' "$0" ;;
+    sed -n '2,26p' "$0" ;;
 esac
