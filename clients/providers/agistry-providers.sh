@@ -35,10 +35,19 @@ alive() {
 # in after a Claude session ends. setsid puts it in its own session and process group so
 # it outlives the caller's terminal, and gives stop_one a group to kill -- otherwise the
 # `sleep` between announces would be orphaned rather than stopped.
+# claim_slot creates the pidfile atomically (noclobber), so exactly one caller wins
+# even if several sessions start at the same moment.
+claim_slot() { ( set -o noclobber; echo $$ > "$1" ) 2>/dev/null; }
+
 start_one() {
-  local n="$1" s; s="$(script_for "$n")"
+  local n="$1" s pf; s="$(script_for "$n")"; pf="$(pidfile "$n")"
   if [ ! -x "$s" ]; then echo "no such provider: $n (looked for $s)" >&2; return 1; fi
-  if alive "$n"; then echo "$n: already running (pid $(cat "$(pidfile "$n")"))"; return 0; fi
+  if ! claim_slot "$pf"; then
+    # somebody holds the slot: either a live daemon, or a pidfile left by a dead one
+    if alive "$n"; then echo "$n: already running (pid $(cat "$pf"))"; return 0; fi
+    rm -f "$pf"
+    claim_slot "$pf" || { echo "$n: another starter won the race"; return 0; }
+  fi
   local pid
   if command -v setsid >/dev/null 2>&1; then
     setsid "$s" --loop "$INTERVAL" >/dev/null 2>&1 < /dev/null &
@@ -47,7 +56,7 @@ start_one() {
     nohup "$s" --loop "$INTERVAL" >/dev/null 2>&1 < /dev/null &   # fallback: SIGHUP-proof only
     pid=$!
   fi
-  echo "$pid" > "$(pidfile "$n")"
+  echo "$pid" > "$pf"
   echo "$n: started (pid $pid)"
 }
 
@@ -71,8 +80,11 @@ case "${1:-start}" in
     for n in "$@"; do start_one "$n"; done ;;
   stop)
     set -- $(enabled)
-    for n in "$@"; do stop_one "$n"; done
-    [ $# -eq 0 ] && echo "AGISTRY_PROVIDERS unset — nothing to stop" ;;
+    if [ $# -eq 0 ]; then
+      echo "AGISTRY_PROVIDERS unset — nothing to stop"
+    else
+      for n in "$@"; do stop_one "$n"; done
+    fi ;;
   status)
     set -- $(enabled)
     [ $# -eq 0 ] && { echo "AGISTRY_PROVIDERS unset — no providers configured"; exit 0; }

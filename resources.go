@@ -131,7 +131,11 @@ func handleResourceRegister(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	ok(w, map[string]any{"status": "registered", "id": in.ID, "max_hold_seconds": maxHoldFor(in.MaxHold)})
+	// Report the cap now in force, not the one in the request: a partial re-register
+	// keeps the stored value, and echoing the request would understate it.
+	var stored int64
+	_ = db.QueryRow(`SELECT max_hold FROM resources WHERE id=?`, in.ID).Scan(&stored)
+	ok(w, map[string]any{"status": "registered", "id": in.ID, "max_hold_seconds": maxHoldFor(stored)})
 }
 
 // upsertResource inserts or refreshes one resource. A refresh revives a resource that
@@ -141,9 +145,16 @@ func upsertResource(id, kind, name, host, meta, source string, maxHold, t int64)
 INSERT INTO resources(id, kind, name, host, meta, source, max_hold, state, registered_at, last_seen)
 VALUES(?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)
 ON CONFLICT(id) DO UPDATE SET
-  kind=excluded.kind, name=excluded.name, host=excluded.host, meta=excluded.meta,
-  source=excluded.source, max_hold=excluded.max_hold,
-  state='online', last_seen=excluded.last_seen`,
+  -- Only overwrite what the caller actually supplied. "provide <id> <kind>" is a
+  -- documented form with name and max-hold optional, and a refresh in that shape must
+  -- not wipe what the provider published -- silently dropping a phone from a 6h cap
+  -- back to the server default would shorten every later hold on it.
+  kind     = CASE WHEN excluded.kind     <> '' THEN excluded.kind     ELSE resources.kind     END,
+  name     = CASE WHEN excluded.name     <> '' THEN excluded.name     ELSE resources.name     END,
+  host     = CASE WHEN excluded.host     <> '' THEN excluded.host     ELSE resources.host     END,
+  meta     = CASE WHEN excluded.meta     <> '' THEN excluded.meta     ELSE resources.meta     END,
+  max_hold = CASE WHEN excluded.max_hold >  0  THEN excluded.max_hold ELSE resources.max_hold END,
+  source=excluded.source, state='online', last_seen=excluded.last_seen`,
 		id, kind, name, host, meta, source, maxHold, t, t)
 	return err
 }
@@ -351,6 +362,37 @@ WHERE resource_id=? AND released_at IS NULL`, in.ResourceID).
 		displaced = &dv
 	}
 
+	// A re-claim by the CURRENT holder is a refresh, not a conflict. The CLI retries on
+	// a 5s curl timeout, so a committed claim whose response was lost would otherwise
+	// come back as 409 naming the caller's own session — and an agent following "ask,
+	// never force" would hand back a device it actually owns.
+	var ownID int64
+	if err := tx.QueryRow(`
+SELECT id FROM leases
+WHERE resource_id=? AND holder=? AND released_at IS NULL AND expires_at > ?`,
+		in.ResourceID, in.SessionID, t).Scan(&ownID); err == nil {
+		newExp := t + ttlSec
+		if hardStop := dv.AcquiredAt + hardCap; dv.AcquiredAt > 0 && newExp > hardStop {
+			newExp = hardStop
+		}
+		if _, err := tx.Exec(`
+UPDATE leases SET expires_at=?, note=CASE WHEN ?<>'' THEN ? ELSE note END
+WHERE id=?`, newExp, in.Note, in.Note, ownID); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			fail(w, err)
+			return
+		}
+		ok(w, map[string]any{
+			"status": "acquired", "resource_id": in.ResourceID, "holder": in.SessionID,
+			"acquired_at": dv.AcquiredAt, "expires_at": newExp, "expires_in": newExp - t,
+			"max_hold_seconds": hardCap, "refreshed": true,
+		})
+		return
+	}
+
 	// Clear the standing lease only if it is stale. A live hold survives and the
 	// INSERT below then trips the unique index.
 	if _, err := tx.Exec(`
@@ -435,13 +477,27 @@ func handleResourceRenew(w http.ResponseWriter, r *http.Request) {
 	in.SessionID = resolveSession(in.SessionID)
 	t := now()
 
-	var acquiredAt, expiresAt, resMax int64
-	err := db.QueryRow(`
-SELECT l.acquired_at, l.expires_at, r.max_hold
-FROM leases l JOIN resources r ON r.id = l.resource_id
-WHERE l.resource_id=? AND l.holder=? AND l.released_at IS NULL AND l.expires_at > ?`,
-		in.ResourceID, in.SessionID, t).Scan(&acquiredAt, &expiresAt, &resMax)
+	// One transaction, and every read inside it goes through tx: the pool holds a single
+	// connection, so a stray db.* call here would deadlock.
+	tx, err := db.Begin()
 	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The holder-liveness clause matters as much as the deadline: once a session is
+	// gone the board already shows the resource free and another agent can take it, so
+	// renewing in that window would leave two agents believing they hold one device.
+	var leaseID, acquiredAt, expiresAt, resMax int64
+	err = tx.QueryRow(`
+SELECT l.id, l.acquired_at, l.expires_at, r.max_hold
+FROM leases l JOIN resources r ON r.id = l.resource_id
+WHERE l.resource_id=? AND l.holder=? AND l.released_at IS NULL AND l.expires_at > ?
+  AND l.holder IN (SELECT session_id FROM agents WHERE state <> 'gone')`,
+		in.ResourceID, in.SessionID, t).Scan(&leaseID, &acquiredAt, &expiresAt, &resMax)
+	if err != nil {
+		_ = tx.Rollback()
 		conflict(w, map[string]any{
 			"error":       "not held by you",
 			"resource_id": in.ResourceID,
@@ -452,31 +508,59 @@ WHERE l.resource_id=? AND l.holder=? AND l.released_at IS NULL AND l.expires_at 
 	}
 
 	hardCap := maxHoldFor(resMax)
+	// An omitted ttl means "as long as I am allowed", which lands exactly on the hard
+	// stop. That is the ordinary case, so it is not a clamp — `capped` is reserved for
+	// a ttl the caller actually asked for and did not get, otherwise the flag fires on
+	// every default renew and stops carrying information.
+	explicit := in.TTL > 0
 	ttlSec := in.TTL
-	if ttlSec <= 0 {
+	if !explicit {
 		ttlSec = hardCap
 	}
 	newExp := t + ttlSec
 	hardStop := acquiredAt + hardCap
 	capped := false
 	if newExp > hardStop {
-		newExp, capped = hardStop, true
+		newExp = hardStop
+		capped = explicit
 	}
 	if newExp < expiresAt {
 		newExp = expiresAt // never shorten a hold by renewing it
 	}
-	if _, err := db.Exec(`UPDATE leases SET expires_at=? WHERE resource_id=? AND holder=? AND released_at IS NULL`,
-		newExp, in.ResourceID, in.SessionID); err != nil {
+
+	res, err := tx.Exec(`UPDATE leases SET expires_at=? WHERE id=? AND released_at IS NULL`, newExp, leaseID)
+	if err != nil {
 		fail(w, err)
 		return
 	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// The reaper released it between the select and the update. Reporting success
+		// here would be the same lie the liveness clause above exists to prevent.
+		_ = tx.Rollback()
+		conflict(w, map[string]any{
+			"error":       "not held by you",
+			"resource_id": in.ResourceID,
+			"holder":      activeLease(in.ResourceID, t),
+			"hint":        "the lease was released while renewing — claim again before continuing",
+		})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		fail(w, err)
+		return
+	}
+
 	resp := map[string]any{
 		"status": "renewed", "resource_id": in.ResourceID,
 		"expires_at": newExp, "expires_in": newExp - t, "max_hold_seconds": hardCap,
 	}
 	if capped {
 		resp["capped"] = true
-		resp["hint"] = "hit the resource's max hold — release and re-claim if you still need it"
+	}
+	// Warn only when the wall is actually close, so the warning still means something.
+	if remaining := hardStop - t; remaining <= 600 {
+		resp["at_max_hold"] = true
+		resp["hint"] = "approaching this resource's max hold — release and re-claim if you need longer"
 	}
 	ok(w, resp)
 }

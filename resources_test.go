@@ -428,3 +428,108 @@ func TestClaimReportsWhatThePreviousHolderLeft(t *testing.T) {
 		t.Fatalf("fresh resource should have no previous hold: %v", m)
 	}
 }
+
+// --- regression tests from PR #6 review ---
+
+// Two agents must never both believe they hold the same device. If a holder's session
+// dies the board frees the phone immediately, so renew must refuse in that same window
+// rather than reporting success to a holder the registry has already written off.
+func TestRenewRefusedOnceHolderIsGone(t *testing.T) {
+	resSetup(t, "s1", "s2")
+	addPhone(t, "adb:1", 0)
+	do(t, "POST", "/resources/claim", `{"resource_id":"adb:1","session_id":"s1"}`)
+
+	do(t, "POST", "/deregister", `{"session_id":"s1"}`) // heartbeat lapsed / crashed
+
+	code, m := do(t, "POST", "/resources/renew", `{"resource_id":"adb:1","session_id":"s1"}`)
+	if code == 200 {
+		t.Fatalf("renew succeeded for a holder the registry considers gone: %v", m)
+	}
+	// and the phone really is claimable by someone else at that moment
+	if c, _ := do(t, "POST", "/resources/claim", `{"resource_id":"adb:1","session_id":"s2"}`); c != 200 {
+		t.Fatalf("phone should be free once its holder is gone, got %d", c)
+	}
+}
+
+// "capped" means *your request was shortened*. A default renew that simply extends to
+// the hard stop is the normal case and must not raise the flag, or the signal that is
+// supposed to mean "you have hit the wall" fires on every renew and stops meaning it.
+func TestDefaultRenewIsNotReportedAsCapped(t *testing.T) {
+	resSetup(t, "s1")
+	addPhone(t, "adb:1", 21600)
+	do(t, "POST", "/resources/claim", `{"resource_id":"adb:1","session_id":"s1"}`)
+	// a minute into a six-hour hold
+	if _, err := db.Exec(`UPDATE leases SET acquired_at=acquired_at-60 WHERE resource_id='adb:1'`); err != nil {
+		t.Fatal(err)
+	}
+	code, m := do(t, "POST", "/resources/renew", `{"resource_id":"adb:1","session_id":"s1"}`)
+	if code != 200 {
+		t.Fatalf("renew failed: %d %v", code, m)
+	}
+	if m["capped"] == true {
+		t.Fatalf("routine renew must not report capped with hours of hold left: %v", m)
+	}
+	if got := m["expires_in"].(float64); got < 21000 {
+		t.Fatalf("renew should extend to the hard stop, got expires_in=%v", got)
+	}
+	// asking for more than the cap IS a clamp, and must still say so
+	_, m = do(t, "POST", "/resources/renew", `{"resource_id":"adb:1","session_id":"s1","ttl_seconds":99999}`)
+	if m["capped"] != true {
+		t.Fatalf("an over-cap request must be flagged: %v", m)
+	}
+}
+
+// The CLI retries with `curl --max-time 5`. If the server committed but the response
+// was lost, the retry must not tell the agent its own device is taken by someone else —
+// following the skill's "ask, never force" rule it would abandon a phone it owns.
+func TestReclaimByCurrentHolderIsIdempotent(t *testing.T) {
+	resSetup(t, "s1")
+	addPhone(t, "adb:1", 0)
+	code, m := do(t, "POST", "/resources/claim", `{"resource_id":"adb:1","session_id":"s1","note":"sha256:abc"}`)
+	if code != 200 {
+		t.Fatalf("first claim: %d %v", code, m)
+	}
+	code, m = do(t, "POST", "/resources/claim", `{"resource_id":"adb:1","session_id":"s1","note":"sha256:abc"}`)
+	if code != 200 {
+		t.Fatalf("re-claim by the same holder must succeed, got %d %v", code, m)
+	}
+	if l := activeLease("adb:1", now()); l == nil || l.Holder != "s1" {
+		t.Fatalf("holder lost its own lease: %v", l)
+	}
+}
+
+// `provide <id> <kind>` is a documented form with name and max-hold optional. A refresh
+// in that shape must not wipe what the provider published, or a phone silently drops
+// from a 6h cap back to the 1h server default.
+func TestPartialReRegisterPreservesResourceFields(t *testing.T) {
+	resSetup(t, "s1")
+	addPhone(t, "adb:1", 21600) // full announce: name, meta, 6h cap
+
+	code, _ := do(t, "POST", "/resources/register", `{"id":"adb:1","kind":"android-device"}`)
+	if code != 200 {
+		t.Fatalf("re-register failed: %d", code)
+	}
+	_, m := do(t, "GET", "/resources", "")
+	r := m["resources"].([]any)[0].(map[string]any)
+	if r["max_hold_seconds"].(float64) != 21600 {
+		t.Fatalf("cap was reset by a partial re-register: %v", r["max_hold_seconds"])
+	}
+	if r["name"] != "pixel" {
+		t.Fatalf("name was wiped by a partial re-register: %v", r["name"])
+	}
+	if r["meta"] == nil {
+		t.Fatalf("meta was wiped by a partial re-register: %v", r)
+	}
+}
+
+// The register response must state the cap actually in force, not the one in the
+// request — a partial re-register keeps the stored value and echoing the request would
+// tell a provider its phones had a shorter cap than they do.
+func TestRegisterReportsEffectiveCap(t *testing.T) {
+	resSetup(t, "s1")
+	addPhone(t, "adb:1", 21600)
+	_, m := do(t, "POST", "/resources/register", `{"id":"adb:1","kind":"android-device"}`)
+	if m["max_hold_seconds"].(float64) != 21600 {
+		t.Fatalf("register echoed the request instead of the stored cap: %v", m)
+	}
+}

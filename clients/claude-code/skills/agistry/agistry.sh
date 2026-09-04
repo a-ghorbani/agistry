@@ -131,7 +131,16 @@ case "$cmd" in
     esac ;;
   claim)
     need_sid
-    rid="${1:?resource id required (see: agistry.sh resources)}"; ttl="${2:-}"; note="${3:-}"
+    rid="${1:?resource id required (see: agistry.sh resources)}"
+    # ttl is optional and sits before note, so accept `claim <id> <note>` too: a
+    # non-numeric second argument is a note, not a ttl. Without this the note is
+    # silently swallowed by add_num, and the note is the whole point.
+    ttl=""; note=""
+    case "${2:-}" in
+      '')       : ;;
+      *[!0-9]*) note="$2" ;;
+      *)        ttl="$2"; note="${3:-}" ;;
+    esac
     body="$(jobj resource_id="$rid" session_id="$SID" note="$note")"
     post /resources/claim "$(add_num "$body" ttl_seconds "$ttl")" ;;
   renew)
