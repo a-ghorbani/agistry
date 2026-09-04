@@ -69,6 +69,9 @@ REGISTRY_TOKEN=dev ./agistry
 | `REGISTRY_TOKEN` | _(unset = auth off)_ | Shared bearer token |
 | `REGISTRY_TTL_SECONDS` | `600` | Idle seconds before an agent is marked `gone` |
 | `REGISTRY_PENDING_TTL_SECONDS` | `604800` (7d) | Seconds an unclaimed message waits before it is dead-lettered |
+| `REGISTRY_RESOURCE_TTL_SECONDS` | `900` | Provider silence before a resource is presumed `gone` |
+| `REGISTRY_LEASE_MAX_HOLD_SECONDS` | `3600` | Fallback cap on a single hold, when a resource sets none |
+| `REGISTRY_RESOURCES_FILE` | _(unset)_ | Optional JSON file seeding resources that have no provider to announce them |
 | `AGISTRY_WEB_DIR` | _(unset = embedded)_ | Dev: serve `web/index.html` from this dir instead of the embedded copy (edit + refresh, no rebuild) |
 
 ## Deploy (systemd)
@@ -112,6 +115,12 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | GET | `/inbox` | `?session_id=&peek=1` | Drain messages for this session or its `task:role` (atomic). `peek=1` returns without consuming. |
 | POST | `/ack` | `{session_id, msg_ids:[...]}` | Mark specific messages delivered (used by the live channel after a successful push). |
 | GET | `/messages` | `?limit=N` | Read-only recent message feed (does **not** consume). |
+| POST | `/resources/register` | `{id, kind, name, host, meta, max_hold_seconds}` | Announce/refresh a resource. Idempotent; a refresh revives one that aged out. |
+| POST | `/resources/deregister` | `{id}` | Retire a resource; releases any standing lease. |
+| GET | `/resources` | `?kind=&host=&id=&free=1&held=1&all=1` | The board: what exists, who holds it, until when, and what the last holder left. |
+| POST | `/resources/claim` | `{resource_id, session_id, ttl_seconds, note}` | Take it exclusively. 409 if a **live** holder has it (response carries their `task:role` so you can message them). Reclaims a stale lease (flagged `reclaimed`). Always reports `previous` — what the last holder left on it. |
+| POST | `/resources/renew` | `{resource_id, session_id, ttl_seconds}` | Extend your hold, never past the resource's cap. |
+| POST | `/resources/release` | `{resource_id, session_id, note}` | Hand it back. The `note` becomes the record of what you left on it. |
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
 
@@ -125,6 +134,54 @@ curl -s $TOK $BASE/assign   -d '{"session_id":"abc","task":"TASK-42","role":"rev
 curl -s $TOK "$BASE/agents?task=TASK-42"
 curl -s $TOK $BASE/send     -d '{"to":"TASK-42:implementer","from":"reviewer","msg":"review done: results at <path>"}'
 curl -s $TOK "$BASE/inbox?session_id=def"
+```
+
+## Resources & leases
+
+A **resource** is a thing agents contend for: an Android phone on a USB hub, a GPU, a
+staging environment, an API quota. Lanes claim one so they stop interrupting each other
+— reinstalling over a running e2e suite, or taking screenshots of someone else's build.
+
+**agistry does not enforce anything.** It cannot stop you running `adb install`. A lease
+is *advisory*: it prevents collisions, it does not prove the resource is in the state
+you expect. Keep whatever verification you already do — the lease and the check answer
+different questions, and a lease that quietly replaces a check makes things worse, since
+the collision still happens and now nothing detects it.
+
+- **A lease, not a lock.** The dominant failure is not contention, it is an agent that
+  dies mid-hold and deadlocks the fleet. A lease ends when its deadline passes **or**
+  when the holder's session goes `gone` — and the second is why this lives in the
+  registry rather than a lock file: only agistry knows the holder died. *Alive holder →
+  held; dead holder → free.* The Claude Code heartbeat daemon ticks independently of
+  agent activity, so a lane blocked in a three-hour test still holds its phone.
+- **A cap, so a live-but-idle holder cannot sit on a device forever.** Per resource via
+  `max_hold_seconds` (set it to ~6h for phones running full e2e suites), falling back to
+  `REGISTRY_LEASE_MAX_HOLD_SECONDS`. Renewal can never outrun it; hitting the cap is the
+  signal to re-claim deliberately.
+- **No `steal`.** Reclaiming a dead holder needs no ceremony and happens automatically
+  inside `claim`, which reports what it displaced. Taking a device from a *live* holder
+  is a conversation, not an API call — hence the 409 carrying their `task:role`, which
+  you hand straight to `/send`.
+- **The note is worth more than the lock.** Every lease carries an opaque note agistry
+  stores and never interprets — an installed bundle hash, a job id, a reason. It
+  survives release, so a lane arriving at a *free* device still learns what is on it,
+  and a reviewer reading back later has a durable record of what was there at capture
+  time.
+- **Discovery belongs to the provider, not the server.** A phone is attached to a
+  *host*, not to the registry, so only something running on that host can see it.
+  `clients/providers/agistry-adb-provider.sh` is the reference: it runs `adb devices`
+  and posts what it finds, on a loop, so devices appear and age out with reality. Static
+  things with nobody to announce them (a staging URL, a quota) go in
+  `REGISTRY_RESOURCES_FILE`.
+
+```bash
+agistry.sh resources free                      # what is available
+agistry.sh claim adb:R5CT21 21600 "app-debug sha256:deadbeef"
+agistry.sh renew adb:R5CT21                    # extend (capped)
+agistry.sh release adb:R5CT21 "left sha256:deadbeef resident"
+
+# occupied? the 409 names the holder — ask them, do not force
+agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
 ```
 
 ## Delivery model
@@ -144,7 +201,8 @@ curl -s $TOK "$BASE/inbox?session_id=def"
   `REGISTRY_PENDING_TTL_SECONDS` is flagged (and shown in the dashboard / `/messages`)
   so a sender can see a handoff was never claimed, rather than it silently vanishing.
 - **Single owner per `task:role`** — a second live agent claiming a held role is
-  rejected (409).
+  rejected (409). The same mechanism (a partial unique index) gives one holder per
+  resource.
 
 ## Schema & upgrades
 

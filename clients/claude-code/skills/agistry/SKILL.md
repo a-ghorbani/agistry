@@ -37,6 +37,33 @@ agistry coordinates **separate, independently-launched top-level sessions** (e.g
 | `heartbeat` | `POST /heartbeat` | Mark yourself still alive (the registry ages out silent agents). |
 | `register [cwd]` | `POST /register` | Identity stub — the SessionStart hook normally does this; manual fallback only. |
 | `leave` | `POST /deregister` | Mark yourself gone (the SessionEnd hook normally does this). |
+| `resources [free\|held\|<kind>]` | `GET /resources` | The resource board — devices, GPUs, environments: what exists, who holds it, and what the last holder left on it. |
+| `claim <id> [ttl] [note]` | `POST /resources/claim` | Take a resource exclusively before you touch it. Put what you are about to install/change in the `note`. |
+| `renew <id> [ttl]` | `POST /resources/renew` | Extend your hold (never past the resource's cap). |
+| `release <id> [note]` | `POST /resources/release` | Hand it back, recording what you left on it for whoever is next. |
+| `provide <id> <kind> [name] [max-hold]` | `POST /resources/register` | Announce a resource this host can see (providers; see `clients/providers/`). |
+
+### Using a shared device
+
+Claim before you touch it, release when you are done:
+
+```bash
+agistry.sh resources free                 # what is available
+agistry.sh claim adb:R5CT21 21600 "installing app-debug sha256:deadbeef"
+# ... run your e2e suite ...
+agistry.sh release adb:R5CT21 "left app-debug sha256:deadbeef resident"
+```
+
+If it is already held, the 409 names the holder — **ask, do not force**:
+
+```bash
+agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
+```
+
+A lease is **advisory**. It stops lanes colliding; it does not prove the device is in
+the state you expect, so keep verifying whatever you were verifying before. If the
+holder's session has died the lease is void and your `claim` simply succeeds — the
+response tells you whose hold you displaced and what they said they left behind.
 
 ## The task-tag
 
