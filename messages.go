@@ -78,14 +78,16 @@ type convRow struct {
 	LastBody     string `json:"last_body"`
 }
 
-// GET /conversations?limit=&q=
-// One row per pair of participants, most recent first — enough to draw a chat list
-// without shipping message bodies. Only the latest message's body comes back, clipped.
-// q filters on participant names (case-insensitive substring).
+// GET /conversations?limit=&with=&q=
+// One row per pair of participants, most recent first — enough to draw a conversation
+// picker without shipping message bodies. Only the latest message's body comes back,
+// clipped. with keeps only conversations that participant took part in (exact name, as
+// the agent panel needs); q filters on participant names (case-insensitive substring).
 func handleConversations(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := clampInt(q.Get("limit"), 100, 1, 500)
 	filter := q.Get("q")
+	with := q.Get("with")
 	rows, err := db.Query(identitySQL+`,
 g AS (
   SELECT MIN(src, dst) AS a, MAX(src, dst) AS b, COUNT(*) AS n, MAX(id) AS last_id,
@@ -95,8 +97,9 @@ g AS (
 )
 SELECT g.a, g.b, g.n, g.pending, g.dead, m.created_at, m.src, m.body
 FROM g JOIN m ON m.id = g.last_id
-WHERE ? = '' OR instr(lower(g.a), lower(?)) > 0 OR instr(lower(g.b), lower(?)) > 0
-ORDER BY g.last_id DESC LIMIT ?`, filter, filter, filter, limit)
+WHERE (? = '' OR g.a = ? OR g.b = ?)
+  AND (? = '' OR instr(lower(g.a), lower(?)) > 0 OR instr(lower(g.b), lower(?)) > 0)
+ORDER BY g.last_id DESC LIMIT ?`, with, with, with, filter, filter, filter, limit)
 	if err != nil {
 		fail(w, err)
 		return

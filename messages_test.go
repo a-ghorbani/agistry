@@ -226,3 +226,24 @@ func TestRetentionKeepsFinishedMessagesForTheWindow(t *testing.T) {
 		t.Fatalf("messages past the retention window were kept: %d left", n)
 	}
 }
+
+// The agent panel lists exactly the conversations one agent took part in. The filter
+// must match a participant name exactly: "T:reviewer" must not pull in "T:reviewer2".
+func TestConversationsWithParticipantIsExact(t *testing.T) {
+	setup(t)
+	joinAgent(t, "s1", "T", "reviewer")
+	joinAgent(t, "s2", "T", "reviewer2")
+	send(t, "s1", "T:impl", "to impl")
+	send(t, "s2", "T:impl", "from reviewer2")
+	send(t, "s1", "U:pm", "to pm")
+
+	cs := conversations(t, "?with=T:reviewer")
+	if len(cs) != 2 {
+		t.Fatalf("want the 2 conversations T:reviewer took part in, got %d: %v", len(cs), cs)
+	}
+	for _, c := range cs {
+		if c["a"] != "T:reviewer" && c["b"] != "T:reviewer" {
+			t.Fatalf("conversation without the participant leaked in: %v", c)
+		}
+	}
+}
