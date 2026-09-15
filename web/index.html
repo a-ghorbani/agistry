@@ -133,6 +133,64 @@
 
   .empty { padding:64px; text-align:center; color:var(--faint); }
 
+  /* ---- chat ---- */
+  #chatView { display:flex; overflow:hidden; }
+  #chatView[hidden] { display:none; }
+  .chat-list { width:320px; flex:none; display:flex; flex-direction:column; min-height:0;
+       border-right:1px solid var(--border); background:var(--panel); }
+  .chat-search { padding:10px; border-bottom:1px solid var(--border-soft); }
+  #chatFilter { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border);
+       border-radius:8px; padding:7px 10px; font:12px var(--ui); }
+  .convs { flex:1; overflow:auto; }
+  .conv { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 10px; padding:10px 14px;
+       border-bottom:1px solid var(--border-soft); cursor:pointer; }
+  .conv:hover { background:var(--hover); }
+  .conv.on { background:var(--panel2); box-shadow:inset 2px 0 0 var(--cyan); }
+  .conv-who { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .conv-time { color:var(--faint); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .conv-prev { grid-column:1 / -1; color:var(--muted); font-size:12px; overflow:hidden;
+       text-overflow:ellipsis; white-space:nowrap; }
+  .conv-meta { grid-column:1 / -1; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+       font-size:11px; color:var(--faint); }
+  .badge { font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel2);
+       border:1px solid var(--border-soft); border-radius:5px; padding:0 6px; }
+  .flag-pend { color:var(--amber); }
+  .flag-dead { color:var(--red); }
+
+  .thread { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .thread-head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:11px 18px;
+       border-bottom:1px solid var(--border); background:var(--panel); }
+  .thread-head .who { font-weight:600; color:var(--text); }
+  .thread-body { flex:1; overflow:auto; padding:10px 18px 22px; display:flex; flex-direction:column; }
+  .earlier { align-self:center; margin:6px 0 10px; font-size:12px; }
+  .daysep { align-self:center; margin:16px 0 6px; color:var(--faint); font-size:10.5px;
+       letter-spacing:.06em; text-transform:uppercase; }
+  .row { display:flex; flex-direction:column; max-width:min(72%, 720px); margin-top:3px; }
+  .row.left { align-self:flex-start; align-items:flex-start; }
+  .row.right { align-self:flex-end; align-items:flex-end; }
+  .row.first { margin-top:14px; }
+  .speaker { margin:0 6px 3px; color:var(--faint); font:11px var(--mono); }
+  .bubble { padding:8px 12px 6px; border-radius:14px; white-space:pre-wrap; overflow-wrap:anywhere;
+       line-height:1.5; font-size:13px; color:var(--text); }
+  .left .bubble { background:var(--panel2); border:1px solid var(--border-soft); border-bottom-left-radius:5px; }
+  .right .bubble { background:rgba(91,200,214,.11); border:1px solid rgba(91,200,214,.22); border-bottom-right-radius:5px; }
+  .bubble-foot { display:flex; gap:7px; justify-content:flex-end; align-items:center; margin-top:4px;
+       color:var(--faint); font-size:10.5px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .mark.pend { color:var(--amber); }
+  .mark.dead { color:var(--red); }
+  .more { display:block; background:none; border:none; padding:2px 0 0; color:var(--cyan); font-size:12px; }
+  .more:hover { background:none; text-decoration:underline; }
+  .chat-empty { margin:auto; padding:40px 20px; color:var(--faint); text-align:center; }
+  .open-chat { margin-left:auto; color:var(--cyan); text-decoration:none; }
+  .open-chat:hover { text-decoration:underline; }
+  .back { display:none; }
+  @media (max-width: 760px){
+    .chat-list { width:100%; border-right:none; }
+    #chatView.open .chat-list { display:none; }
+    #chatView:not(.open) .thread { display:none; }
+    .back { display:inline-block; }
+  }
+
   /* ---- graph ---- */
   #graphView { overflow:hidden; }
   #graphCanvas { display:block; width:100%; height:100%; cursor:grab; }
@@ -178,6 +236,7 @@
   <div class="viewtog" id="viewtog">
     <button data-view="graph">Graph</button>
     <button data-view="table">Table</button>
+    <button data-view="chat">Chat</button>
   </div>
   <input id="tok" type="password" placeholder="registry token" size="20">
   <label class="chk"><input id="gone" type="checkbox"> gone</label>
@@ -213,6 +272,14 @@
   <div id="tableView" class="view" hidden>
     <div id="body"></div>
   </div>
+
+  <div id="chatView" class="view" hidden>
+    <div class="chat-list">
+      <div class="chat-search"><input id="chatFilter" placeholder="filter by task or role" autocomplete="off"></div>
+      <div id="convs" class="convs"></div>
+    </div>
+    <div id="thread" class="thread"><div class="chat-empty">select a conversation</div></div>
+  </div>
 </main>
 
 <script>
@@ -228,6 +295,7 @@
   var viewtog = document.getElementById('viewtog');
   var graphView = document.getElementById('graphView');
   var tableView = document.getElementById('tableView');
+  var chatView = document.getElementById('chatView');
   var timer = null;
 
   tok.value = localStorage.getItem('registry_token') || '';
@@ -326,7 +394,7 @@
         '<span class="m-who" title="' + esc(whoFull) + '">' + esc(who) + '</span>' +
         '<span class="dot ' + st + '" title="' + st + '"></span>' +
         '<span class="m-prev">' + esc(m.body || '') + '</span>' +
-        (open ? '<div class="m-full"><div class="m-meta"><span>' + (outgoing?'to ':'from ') + esc(whoFull) + '</span><span>' + st + '</span><span>' + rel(m.created_at) + ' ago</span></div>' + esc(m.body || '') + '</div>' : '') +
+        (open ? '<div class="m-full"><div class="m-meta"><span>' + (outgoing?'to ':'from ') + esc(whoFull) + '</span><span>' + st + '</span><span>' + rel(m.created_at) + ' ago</span>' + (m.from_identity && m.to_identity ? '<a class="open-chat" href="#" data-a="' + esc(m.from_identity) + '" data-b="' + esc(m.to_identity) + '">open conversation ›</a>' : '') + '</div>' + esc(m.body || '') + '</div>' : '') +
       '</div>');
     });
     out.push('</div>');
@@ -410,6 +478,11 @@
   body.addEventListener('click', function(e){
     var n = e.target;
     while (n && n !== body){
+      if (n.classList && n.classList.contains('open-chat')){
+        e.preventDefault();
+        openConversation(n.getAttribute('data-a'), n.getAttribute('data-b'));
+        return;
+      }
       if (n.classList && n.classList.contains('msg')){
         var mid = n.getAttribute('data-mid');
         if (mid){ expandedMsg[mid] = !expandedMsg[mid]; renderTable(); }
@@ -1036,7 +1109,9 @@
         var whoFull = outgoing ? (m.to_session || ((m.to_task||'')+':'+(m.to_role||''))) : (m.from||'');
         var who = outgoing ? (m.to_session ? m.to_session.slice(0,8) : ((m.to_task||'')+':'+(m.to_role||''))) : (m.from||'').slice(0,8);
         var st = msgStatus(m);
-        h.push('<div class="msg" style="grid-template-columns:36px 14px 1fr 12px; cursor:default">' +
+        var pa = m.from_identity && m.to_identity;
+        h.push('<div class="msg"' + (pa ? ' data-a="' + esc(m.from_identity) + '" data-b="' + esc(m.to_identity) + '" title="open conversation"' : '') +
+          ' style="grid-template-columns:36px 14px 1fr 12px; cursor:' + (pa ? 'pointer' : 'default') + '">' +
           '<span class="m-time">' + rel(m.created_at) + '</span>' +
           '<span class="m-dir' + (outgoing?' out':'') + '">' + (outgoing?'↗':'↙') + '</span>' +
           '<span class="m-who" title="'+esc(whoFull)+'">' + esc(who) + '</span>' +
@@ -1052,19 +1127,251 @@
   }
 
   // =====================================================================
+  //  CHAT VIEW — messages regrouped as two-party conversations
+  // =====================================================================
+  // Loading stays proportional to what is on screen: the list is a server-side summary
+  // (one row per pair, one clipped preview), a thread loads its newest page, and older
+  // pages load only when asked for. Polls refresh just the newest page.
+  var convsEl = document.getElementById('convs');
+  var threadEl = document.getElementById('thread');
+  var chatFilter = document.getElementById('chatFilter');
+  var convs = [];
+  var chatErr = '';
+  var chatOpen = null;       // {a, b}, sorted so sides never swap
+  var threadMsgs = [];       // oldest first, newest page merged with any earlier pages
+  var threadHasMore = false;
+  var threadSeq = 0;
+  var threadSig = '';
+  var stickBottom = true;
+  var chatExpanded = {};     // msg_id -> body shown in full
+  var LONG_BODY = 700;
+  var threadErr = '';        // last thread load failure, shown instead of an endless "loading…"
+  var threadLoaded = false;  // a load has succeeded for the open conversation
+
+  function authHeaders(){ return { 'X-Registry-Token': tok.value.trim() }; }
+  function pairKey(a, b){ return a < b ? a + '\u0000' + b : b + '\u0000' + a; }
+
+  // "POC-94:reviewer" -> task + role; a bare session id (no colon) stands for itself
+  function splitIdent(s){
+    var i = (s || '').indexOf(':');
+    return i < 0 ? { task:'', role:(s || '').slice(0, 8) } : { task:s.slice(0, i), role:s.slice(i + 1) };
+  }
+  function identName(s){ var p = splitIdent(s); return p.role === '*' ? 'everyone in ' + p.task : p.role; }
+  function identTasks(a, b){
+    var out = [];
+    [a, b].forEach(function(s){ var t = splitIdent(s).task; if (t && out.indexOf(t) < 0) out.push(t); });
+    return out;
+  }
+  // live if any non-gone agent currently answers to this name
+  function identLive(s){
+    var ag = lastAgents.agents || [];
+    for (var i = 0; i < ag.length; i++){
+      var x = ag[i];
+      if (x.state !== 'gone' && (x.session_id === s || (x.role && (x.task + ':' + x.role) === s))) return true;
+    }
+    return false;
+  }
+  function identChip(s){
+    var live = identLive(s), t = splitIdent(s).task;
+    return '<span class="state" title="' + esc(s) + (live ? ' · online' : ' · offline') + '">' +
+      '<span class="dot ' + (live ? 'active' : 'unassigned') + '"></span>' +
+      '<span class="who">' + esc(identName(s)) + '</span>' +
+      (t ? '<span class="badge">' + esc(t) + '</span>' : '') + '</span>';
+  }
+  function dayLabel(ts){
+    var d = new Date(ts * 1000), today = new Date();
+    var y = new Date(); y.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'today';
+    if (d.toDateString() === y.toDateString()) return 'yesterday';
+    return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  }
+  function clock(ts){ return new Date(ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); }
+
+  function loadChat(){
+    if (view !== 'chat') return;
+    fetch('/conversations?limit=200', { headers: authHeaders() })
+      .then(function(r){
+        if (r.status === 404) throw new Error('old-server');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(d){ convs = d.conversations || []; chatErr = ''; renderConvs(); })
+      .catch(function(e){ chatErr = e.message; renderConvs(); threadSig = ''; renderThread(); });
+    if (chatOpen) loadThread(false);
+  }
+
+  function renderConvs(){
+    if (chatErr){
+      convsEl.innerHTML = '<div class="chat-empty">' + (chatErr === 'old-server'
+        ? 'This agistry server predates the chat view.<br>Rebuild and restart it to enable chat.'
+        : 'error: ' + esc(chatErr)) + '</div>';
+      return;
+    }
+    var f = chatFilter.value.trim().toLowerCase();
+    var list = convs.filter(function(c){ return !f || (c.a + ' ' + c.b).toLowerCase().indexOf(f) >= 0; });
+    if (!list.length){
+      convsEl.innerHTML = '<div class="chat-empty">' + (convs.length ? 'no conversation matches' : 'no messages yet') + '</div>';
+      return;
+    }
+    var openKey = chatOpen ? pairKey(chatOpen.a, chatOpen.b) : '';
+    convsEl.innerHTML = list.map(function(c){
+      return '<div class="conv' + (pairKey(c.a, c.b) === openKey ? ' on' : '') + '" data-a="' + esc(c.a) + '" data-b="' + esc(c.b) + '">' +
+        '<span class="conv-who">' + esc(identName(c.a)) + ' ↔ ' + esc(identName(c.b)) + '</span>' +
+        '<span class="conv-time">' + rel(c.last_at) + '</span>' +
+        '<span class="conv-prev">' + esc(identName(c.last_from)) + ': ' + esc(c.last_body) + '</span>' +
+        '<span class="conv-meta">' +
+          identTasks(c.a, c.b).map(function(t){ return '<span class="badge">' + esc(t) + '</span>'; }).join('') +
+          '<span>' + c.count + ' message' + (c.count === 1 ? '' : 's') + '</span>' +
+          (c.pending ? '<span class="flag-pend">' + c.pending + ' waiting</span>' : '') +
+          (c.dead_lettered ? '<span class="flag-dead">' + c.dead_lettered + ' never claimed</span>' : '') +
+        '</span></div>';
+    }).join('');
+  }
+  convsEl.addEventListener('click', function(e){
+    var n = e.target.closest('.conv');
+    if (n) openConversation(n.getAttribute('data-a'), n.getAttribute('data-b'));
+  });
+  chatFilter.addEventListener('input', renderConvs);
+
+  function openConversation(a, b){
+    if (b < a){ var t = a; a = b; b = t; }
+    var same = chatOpen && chatOpen.a === a && chatOpen.b === b;
+    chatOpen = { a:a, b:b };
+    if (!same){ threadMsgs = []; threadHasMore = false; threadSig = ''; stickBottom = true; threadErr = ''; threadLoaded = false; }
+    try { history.replaceState(null, '', '#chat=' + encodeURIComponent(a) + '&with=' + encodeURIComponent(b)); } catch (err) {}
+    chatView.classList.add('open');
+    if (view !== 'chat'){ view = 'chat'; applyView(); return; }
+    renderConvs(); renderThread(); loadThread(false);
+  }
+
+  function threadBody(){ return document.getElementById('threadBody'); }
+
+  function loadThread(earlier){
+    if (!chatOpen) return;
+    var open = chatOpen, seq = ++threadSeq;
+    var before = earlier && threadMsgs.length ? threadMsgs[0].id : 0;
+    fetch('/conversations/thread?a=' + encodeURIComponent(open.a) + '&b=' + encodeURIComponent(open.b) +
+          '&limit=50' + (before ? '&before=' + before : ''), { headers: authHeaders() })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){
+        if (!chatOpen || chatOpen.a !== open.a || chatOpen.b !== open.b) return;  // switched away
+        threadErr = ''; threadLoaded = true;
+        var page = d.messages || [];
+        if (earlier){
+          var tb = threadBody(), prevH = tb ? tb.scrollHeight : 0, prevTop = tb ? tb.scrollTop : 0;
+          threadMsgs = page.concat(threadMsgs);
+          threadHasMore = d.has_more;
+          renderThread();
+          tb = threadBody();
+          if (tb) tb.scrollTop = prevTop + (tb.scrollHeight - prevH);   // keep the reader's place
+          return;
+        }
+        if (seq !== threadSeq) return;   // a newer request superseded this refresh
+        mergeLatest(page, d.has_more);
+        renderThread();
+      })
+      .catch(function(e){ threadErr = e.message; threadSig = ''; renderThread(); });
+  }
+
+  // Fold a fresh newest page into what is loaded. Earlier pages survive when the new page
+  // overlaps what we already hold; if it does not, more than a page arrived since, so
+  // drop the older pages rather than show a silent gap.
+  function mergeLatest(page, hasMore){
+    if (!page.length){ threadMsgs = []; threadHasMore = false; return; }
+    var floor = page[0].id;
+    var held = threadMsgs.length ? threadMsgs[threadMsgs.length - 1].id : 0;
+    var keep = held && floor <= held ? threadMsgs.filter(function(m){ return m.id < floor; }) : [];
+    threadMsgs = keep.concat(page);
+    if (!keep.length) threadHasMore = hasMore;
+  }
+
+  function renderThread(){
+    if (!chatOpen){ threadEl.innerHTML = '<div class="chat-empty">select a conversation</div>'; threadSig = ''; return; }
+    var a = chatOpen.a, b = chatOpen.b;
+    // skip identical re-renders so a poll does not wipe a text selection
+    var sig = a + '|' + b + '|' + threadHasMore + '|' + chatErr + '|' + threadErr + '|' + threadLoaded + '|' + identLive(a) + identLive(b) + '|' + threadMsgs.map(function(m){
+      return m.id + (m.delivered ? 'd' : '') + (m.dead_lettered ? 'x' : '') + (chatExpanded[m.msg_id] ? 'e' : '');
+    }).join(',');
+    if (sig === threadSig) return;
+    threadSig = sig;
+
+    var old = threadBody();
+    var atBottom = stickBottom || !old || (old.scrollHeight - old.scrollTop - old.clientHeight < 40);
+    var prevTop = old ? old.scrollTop : 0;
+
+    var h = ['<div class="thread-head"><button class="back" id="chatBack">‹ back</button>',
+      identChip(a), '<span class="conv-time">↔</span>', identChip(b), '<span class="grow"></span>',
+      '<span class="conv-time">' + threadMsgs.length + (threadHasMore ? '+' : '') + ' messages</span></div>',
+      '<div class="thread-body" id="threadBody">'];
+    if (threadHasMore) h.push('<button class="earlier" id="chatEarlier">load earlier messages</button>');
+    if (!threadMsgs.length){
+      h.push('<div class="chat-empty">' + (chatErr === 'old-server'
+        ? 'This agistry server predates the chat view.<br>Rebuild and restart it to enable chat.'
+        : threadErr ? 'could not load this conversation: ' + esc(threadErr)
+        : threadLoaded ? 'no messages in this conversation (they may have aged out)'
+        : 'loading…') + '</div>');
+    }
+    var lastDay = '', lastFrom = '', lastAt = 0;
+    threadMsgs.forEach(function(m){
+      var day = dayLabel(m.created_at);
+      if (day !== lastDay){ h.push('<div class="daysep">' + esc(day) + '</div>'); lastDay = day; lastFrom = ''; }
+      var side = m.from_identity === a ? 'left' : 'right';
+      // a run from one speaker within five minutes shares a single label
+      var first = m.from_identity !== lastFrom || (m.created_at - lastAt) > 300;
+      lastFrom = m.from_identity; lastAt = m.created_at;
+      var body = m.body || '';
+      var isLong = body.length > LONG_BODY, clipped = isLong && !chatExpanded[m.msg_id];
+      var mark = m.dead_lettered ? '<span class="mark dead" title="the recipient never picked this up">✕ never claimed</span>'
+               : m.delivered ? '<span class="mark" title="delivered">✓</span>'
+               : '<span class="mark pend" title="waiting in the mailbox">◷ waiting</span>';
+      h.push('<div class="row ' + side + (first ? ' first' : '') + '">' +
+        (first ? '<span class="speaker" title="' + esc(m.from_identity) + ' · ' + esc(m.from || '') + '">' + esc(identName(m.from_identity)) + '</span>' : '') +
+        '<div class="bubble">' + esc(clipped ? body.slice(0, LONG_BODY) + '…' : body) +
+          (isLong ? '<button class="more" data-mid="' + esc(m.msg_id) + '">' + (clipped ? 'show more' : 'show less') + '</button>' : '') +
+          '<div class="bubble-foot"><span title="' + esc(new Date(m.created_at * 1000).toLocaleString()) + '">' + clock(m.created_at) + '</span>' + mark + '</div>' +
+        '</div></div>');
+    });
+    h.push('</div>');
+    threadEl.innerHTML = h.join('');
+    var tb = threadBody();
+    tb.scrollTop = atBottom ? tb.scrollHeight : prevTop;
+    stickBottom = false;
+  }
+  threadEl.addEventListener('click', function(e){
+    var t = e.target;
+    if (t.id === 'chatEarlier'){ t.disabled = true; t.textContent = 'loading…'; loadThread(true); return; }
+    if (t.id === 'chatBack'){ chatView.classList.remove('open'); return; }
+    if (t.classList && t.classList.contains('more')){
+      var mid = t.getAttribute('data-mid');
+      chatExpanded[mid] = !chatExpanded[mid];
+      renderThread();
+    }
+  });
+  nodePanel.addEventListener('click', function(e){
+    var n = e.target.closest('.msg[data-a]');
+    if (n) openConversation(n.getAttribute('data-a'), n.getAttribute('data-b'));
+  });
+
+  // =====================================================================
   //  VIEW SWITCH + DATA LOAD
   // =====================================================================
   function applyView(){
-    var graph = view === 'graph';
+    var graph = view === 'graph', chat = view === 'chat';
     graphView.hidden = !graph;
-    tableView.hidden = graph;
+    tableView.hidden = view !== 'table';
+    chatView.hidden = !chat;
     idleWrap.style.display = graph ? '' : 'none';
+    if (!chat && location.hash){ try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {} }
     Array.prototype.forEach.call(viewtog.children, function(b){
       b.classList.toggle('on', b.getAttribute('data-view') === view);
     });
     localStorage.setItem('agistry_view', view);
     if (graph){ buildGraph(); startGraph(); }
-    else { stopGraph(); renderTable(); }
+    else {
+      stopGraph();
+      if (chat){ renderConvs(); renderThread(); loadChat(); }
+      else renderTable();
+    }
   }
   viewtog.addEventListener('click', function(e){
     var b = e.target.closest('button'); if (!b) return;
@@ -1080,6 +1387,7 @@
     summary.textContent = a.length + ' agents · ' + active + ' active' + (nh? ' · ' + nh + ' host' + (nh>1?'s':'') : '') +
       (rs.length ? ' · ' + rs.length + ' resource' + (rs.length>1?'s':'') + ' (' + rh + ' held)' : '');
     if (view === 'graph'){ buildGraph(); }
+    else if (view === 'chat'){ loadChat(); }
     else { renderTable(); }
   }
 
@@ -1115,6 +1423,17 @@
   gone.onchange = load;
   idle.onchange = function(){ if (view==='graph') buildGraph(); };
   tok.onchange = load;
+
+  // deep link: #chat=<a>&with=<b> opens that conversation
+  (function(){
+    var m = /^#chat=([^&]*)&with=(.*)$/.exec(location.hash);
+    if (!m) return;
+    try {
+      var a = decodeURIComponent(m[1]), b = decodeURIComponent(m[2]);
+      if (b < a){ var t = a; a = b; b = t; }
+      chatOpen = { a:a, b:b }; view = 'chat'; chatView.classList.add('open');
+    } catch (err) {}
+  })();
 
   applyView();
   load(); schedule();

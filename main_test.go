@@ -14,6 +14,7 @@ func setup(t *testing.T) {
 	token = ""
 	ttl = 600
 	pendingTTL = 604800
+	messageRetention = 2592000
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	var err error
 	db, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
