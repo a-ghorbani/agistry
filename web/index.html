@@ -92,6 +92,22 @@
   .dot.pending { background:var(--amber); }
   .dot.deadletter { background:var(--red); }
 
+  /* resources are squares everywhere, so they never read as agents */
+  .sq { width:8px; height:8px; border-radius:2px; flex:none; display:inline-block; vertical-align:middle; }
+  .sq.free { box-shadow:inset 0 0 0 1.5px var(--muted); }
+  .sq.held { background:#cfd0d6; }
+  .sq.expiring { background:var(--amber); }
+  .sq.gone { box-shadow:inset 0 0 0 1.5px var(--red); }
+
+  .section { display:flex; align-items:baseline; gap:6px; padding:16px 14px 4px;
+       color:var(--faint); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; }
+  .section b { color:var(--muted); font-weight:500; }
+  td.glyph { width:26px; text-align:center; }
+  td.res-name { font-weight:500; }
+  td.res-name .rid { display:block; font-family:var(--mono); font-size:11px; color:var(--faint); font-weight:400; }
+  td.note { color:var(--muted); max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.note .last { color:var(--faint); }
+
   tr.detail td { background:var(--panel2); padding:4px 14px 12px 40px;
        border-bottom:1px solid var(--border-soft); }
   .msgs { display:flex; flex-direction:column; }
@@ -186,6 +202,9 @@
       <span><span class="dot gone"></span>gone</span>
       <span><span class="dot pending"></span>pending msg</span>
       <span style="color:var(--cyan)">— ◦→ live message</span>
+      <span><span class="sq free"></span>free resource</span>
+      <span><span class="sq held"></span>held</span>
+      <span><span class="sq expiring"></span>ending soon</span>
     </div>
     <div class="hint">drag node · scroll zoom · click for detail</div>
     <div id="nodePanel" hidden></div>
@@ -232,6 +251,8 @@
   var expandedMsg = {};   // msg_id -> open (table)
   var lastAgents = { agents: [] };
   var lastMessages = [];
+  var lastResources = [];
+  var resFetchedAt = 0;   // ms; see leaseLeft
 
   function messagesFor(a){
     var sid = a.session_id;
@@ -247,6 +268,41 @@
     if (m.dead_lettered) return 'deadletter';
     if (m.delivered) return 'delivered';
     return 'pending';
+  }
+
+  // seconds -> "5h 59m" / "12m" / "40s"
+  function dur(s){
+    s = Math.max(0, Math.floor(s));
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm';
+    var h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+    return h + 'h' + (m ? ' ' + m + 'm' : '');
+  }
+
+  // Seconds left on a hold. Uses the server's expires_in minus the time since the fetch,
+  // not expires_at against the local clock, so a skewed browser clock cannot misreport it.
+  function leaseLeft(r){
+    if (!r.lease) return 0;
+    return r.lease.expires_in - (Date.now() - resFetchedAt)/1000;
+  }
+  var EXPIRING_SOON = 600; // same window as the server's at_max_hold warning
+
+  function resState(r){
+    if (r.state === 'gone') return 'gone';
+    if (!r.held) return 'free';
+    return leaseLeft(r) <= EXPIRING_SOON ? 'expiring' : 'held';
+  }
+
+  // task:role for a lease holder. A standing lease carries it; a finished one has only
+  // the session id, so look that up among the agents we have.
+  function holderLabel(l){
+    if (!l) return '';
+    if (l.holder_task || l.holder_role) return (l.holder_task || '?') + ':' + (l.holder_role || '?');
+    var a = lastAgents.agents || [];
+    for (var i = 0; i < a.length; i++){
+      if (a[i].session_id === l.holder && (a[i].task || a[i].role)) return (a[i].task || '?') + ':' + (a[i].role || '?');
+    }
+    return (l.holder || '').slice(0, 8);
   }
 
   // =====================================================================
@@ -277,10 +333,49 @@
     return out.join('');
   }
 
+  function resourcesTableHtml(){
+    var rs = lastResources;
+    if (!rs.length) return '';
+    var held = rs.filter(function(r){ return r.held; }).length;
+    var out = ['<div class="section">resources <b>' + rs.length + '</b> · <b>' + held + '</b> held</div>',
+      '<table><thead><tr>',
+      '<th></th><th>Resource</th><th>Kind</th><th>Host</th><th>Holder</th><th>Expires</th><th>Note</th>',
+      '</tr></thead><tbody>'];
+    rs.forEach(function(r){
+      var st = resState(r);
+      var holder = '<span class="last">—</span>', expires = '—', note = '', title = '';
+      if (r.held){
+        holder = '<span title="' + esc(r.lease.holder) + '">' + esc(holderLabel(r.lease)) + '</span>';
+        expires = 'in ' + dur(leaseLeft(r));
+        note = esc(r.lease.note || '');
+        title = r.lease.note || '';
+      } else if (r.last_lease){
+        // free, but say what the last holder left on it: that decides whether to reinstall
+        var l = r.last_lease;
+        note = '<span class="last">last · ' + esc(holderLabel(l)) + ' · ' + rel(l.released_at) + ' ago' +
+               (l.note ? ' — </span>' + esc(l.note) : '</span>');
+        title = l.note || '';
+      }
+      out.push('<tr class="member">' +
+        '<td class="glyph"><span class="sq ' + st + '" title="' + st + '"></span></td>' +
+        '<td class="res-name">' + esc(r.name || r.id) + '<span class="rid">' + esc(r.id) + '</span></td>' +
+        '<td class="host">' + esc(r.kind || '—') + '</td>' +
+        '<td class="host">' + esc(r.host || '—') + '</td>' +
+        '<td class="sid">' + holder + '</td>' +
+        '<td class="num">' + expires + '</td>' +
+        '<td class="note" title="' + esc(title) + '">' + (note || '<span class="last">—</span>') + '</td>' +
+      '</tr>');
+    });
+    out.push('</tbody></table>');
+    return out.join('');
+  }
+
   function renderTable(){
     var a = lastAgents.agents || [];
-    if (!a.length){ body.innerHTML = '<div class="empty">no agents registered</div>'; return; }
-    var rows = ['<table><thead><tr>',
+    var resHtml = resourcesTableHtml();
+    if (!a.length){ body.innerHTML = resHtml + '<div class="empty">no agents registered</div>'; return; }
+    var rows = [resHtml, resHtml ? '<div class="section">agents <b>' + a.length + '</b></div>' : '',
+      '<table><thead><tr>',
       '<th></th><th>Role</th><th>State</th><th>Session</th><th>Host</th>',
       '<th>Msgs</th><th>Seen</th><th>Cwd</th></tr></thead><tbody>'];
     var lastTask = null;
@@ -346,6 +441,7 @@
   var nodes = [];         // current visible node list
   var links = [];         // {a, b, dir:[{from,to}], msgs:[...]}  (b is target)
   var linkByKey = {};
+  var leaseLinks = [];    // {from: 'res:<id>', to: holder session_id, res}
   var hostCentroids = {}; // host -> {x,y,n}
   var seenMsg = {};       // msg_id -> client perf time first observed (for pulse animation)
   var firstLoad = true;
@@ -374,6 +470,7 @@
   function viewSize(){ var d = dpr(); return { w: canvas.width/d, h: canvas.height/d }; }
 
   function nodeRadius(n){
+    if (n.kind === 'resource') return 7.5;
     var base = 6 + Math.min(14, n.deg * 2.2);
     if (n.idle) base = 4.5;
     return base;
@@ -429,6 +526,23 @@
       n.deg = 0;
       next.push(n);
     });
+    // resources: square nodes that join their host cluster like agents do
+    lastResources.forEach(function(r, i){
+      var id = 'res:' + r.id;
+      visIds[id] = true;
+      var n = nodesById[id];
+      if (!n){
+        var ang = i * 2.399963 + 1.2, rad = 120 + i * 8;
+        n = { id:id, x: Math.cos(ang)*rad, y: Math.sin(ang)*rad, vx:0, vy:0 };
+        nodesById[id] = n;
+      }
+      n.kind = 'resource';
+      n.res = r;
+      n.host = r.host || '';
+      n.label = r.name || r.id;
+      n.deg = 0;
+      next.push(n);
+    });
     nodes = next;
 
     // drop stale node objects
@@ -449,6 +563,13 @@
         nodesById[from].deg++;
         nodesById[to].deg++;
       });
+    });
+
+    // lease edges: a held resource is tied to its holder (if that agent is on screen)
+    leaseLinks = [];
+    lastResources.forEach(function(r){
+      if (!r.held || !r.lease || !nodesById[r.lease.holder]) return;
+      leaseLinks.push({ from: 'res:' + r.id, to: r.lease.holder, res: r });
     });
 
     // stamp messages for pulse animation
@@ -517,6 +638,16 @@
       var fx = f*dx/d, fy = f*dy/d;
       p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
     });
+    // lease edges pull a held resource in close to its holder
+    leaseLinks.forEach(function(l){
+      var p = nodesById[l.from], q = nodesById[l.to];
+      if (!p || !q) return;
+      var dx = q.x-p.x, dy = q.y-p.y;
+      var d = Math.sqrt(dx*dx+dy*dy) || 0.01;
+      var f = 0.02 * (d - 58);
+      var fx = f*dx/d, fy = f*dy/d;
+      p.vx += fx; p.vy += fy; q.vx -= fx; q.vy -= fy;
+    });
     // gravity to center + to host cluster
     nodes.forEach(function(p){
       p.vx += -p.x*CENTER; p.vy += -p.y*CENTER;
@@ -567,7 +698,24 @@
     if (hover){
       hoverNeighbors[hover.id] = true;
       links.forEach(function(l){ if (l.from===hover.id) hoverNeighbors[l.to]=true; if (l.to===hover.id) hoverNeighbors[l.from]=true; });
+      leaseLinks.forEach(function(l){ if (l.from===hover.id) hoverNeighbors[l.to]=true; if (l.to===hover.id) hoverNeighbors[l.from]=true; });
     }
+
+    // lease edges, under message edges: solid and neutral, since "held by" is not traffic
+    leaseLinks.forEach(function(l){
+      var p = nodesById[l.from], q = nodesById[l.to];
+      if (!p || !q) return;
+      var sp = w2s(p.x,p.y), sq = w2s(q.x,q.y);
+      var related = !hover || hover.id===l.from || hover.id===l.to;
+      var ending = resState(l.res) === 'expiring';
+      ctx.save();
+      ctx.lineWidth = related ? 2 : 1.2;
+      ctx.strokeStyle = ending
+        ? (related ? 'rgba(207,155,70,0.7)' : 'rgba(207,155,70,0.2)')
+        : (related ? 'rgba(207,208,214,0.45)' : 'rgba(207,208,214,0.12)');
+      ctx.beginPath(); ctx.moveTo(sp.x,sp.y); ctx.lineTo(sq.x,sq.y); ctx.stroke();
+      ctx.restore();
+    });
 
     // edges
     links.forEach(function(l){
@@ -616,6 +764,7 @@
 
     // nodes
     nodes.forEach(function(p){
+      if (p.kind === 'resource'){ drawResource(p, hover && !hoverNeighbors[p.id]); return; }
       var s = w2s(p.x,p.y);
       var r = nodeRadius(p) * cam.scale;
       var col = COL[p.state] || COL.unassigned;
@@ -634,8 +783,8 @@
       ctx.fill();
       ctx.shadowBlur = 0;
       // ring
-      ctx.lineWidth = (p === selected) ? 2.4 : 1.2;
-      ctx.strokeStyle = (p === selected) ? COL.cyan : 'rgba(11,11,12,0.9)';
+      ctx.lineWidth = (p.id === selected) ? 2.4 : 1.2;
+      ctx.strokeStyle = (p.id === selected) ? COL.cyan : 'rgba(11,11,12,0.9)';
       ctx.stroke();
       if (p === hover){
         ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(237,237,239,0.6)';
@@ -655,6 +804,52 @@
         ctx.restore();
       }
     });
+  }
+
+  function roundRect(x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y); ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+    ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+    ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+    ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y);
+    ctx.closePath();
+  }
+
+  // Filled = held, hollow = free, amber = hold ending soon, red outline = gone.
+  function drawResource(p, dim){
+    var s = w2s(p.x,p.y);
+    var h = 6.5 * cam.scale;   // half side
+    var st = resState(p.res);
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.28 : 1;
+    roundRect(s.x-h, s.y-h, h*2, h*2, 2.5*cam.scale);
+    if (st === 'held' || st === 'expiring'){
+      ctx.fillStyle = st === 'expiring' ? COL.amber : '#cfd0d6';
+      if (!dim){ ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10; }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = 'rgba(20,20,22,1)';
+      ctx.fill();
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = st === 'gone' ? COL.red : 'rgba(149,150,160,0.9)';
+      ctx.stroke();
+    }
+    if (p.id === selected || p === hover){
+      ctx.lineWidth = p.id === selected ? 2 : 1.5;
+      ctx.strokeStyle = p.id === selected ? COL.cyan : 'rgba(237,237,239,0.6)';
+      roundRect(s.x-h-3, s.y-h-3, h*2+6, h*2+6, 4*cam.scale);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.3 : 0.85;
+    ctx.fillStyle = '#9596a0';
+    ctx.font = '10.5px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(p.label, s.x, s.y + h + 5);
+    ctx.restore();
   }
 
   function drawArrow(sp, sq, backoff, alpha){
@@ -768,8 +963,56 @@
     cam.x += p.x - after.x; cam.y += p.y - after.y;
   }, { passive:false });
 
+  // released_by is a code; say what happened in words
+  function releasedHow(code){
+    return { 'holder':'handed back', 'expired':'expired', 'holder-gone':'holder died',
+             'resource-gone':'resource retired' }[code] || code || '';
+  }
+
+  function renderResourcePanel(n){
+    var r = n.res, st = resState(r);
+    var h = ['<div class="np-head">',
+      '<span class="sq ' + st + '"></span>',
+      '<span class="np-role">' + esc(r.name || r.id) + '</span>',
+      '<button class="np-close" id="npClose">×</button></div>'];
+    h.push('<dl class="np-grid">');
+    h.push('<dt>status</dt><dd>' + esc(st === 'expiring' ? 'held · ending soon' : st) + '</dd>');
+    h.push('<dt>id</dt><dd title="'+esc(r.id)+'">' + esc(r.id) + '</dd>');
+    h.push('<dt>kind</dt><dd>' + esc(r.kind || '—') + '</dd>');
+    h.push('<dt>host</dt><dd>' + esc(r.host || '—') + '</dd>');
+    h.push('<dt>max hold</dt><dd>' + dur(r.max_hold_seconds) + '</dd>');
+    if (r.held){
+      h.push('<dt>holder</dt><dd title="'+esc(r.lease.holder)+'">' + esc(holderLabel(r.lease)) + '</dd>');
+      h.push('<dt>since</dt><dd>' + rel(r.lease.acquired_at) + ' ago</dd>');
+      h.push('<dt>expires</dt><dd>in ' + dur(leaseLeft(r)) + '</dd>');
+    }
+    if (r.meta && typeof r.meta === 'object' && !Array.isArray(r.meta)){
+      Object.keys(r.meta).slice(0, 6).forEach(function(k){
+        var v = r.meta[k];
+        if (v === '' || v == null || typeof v === 'object') return;
+        h.push('<dt>' + esc(k) + '</dt><dd title="'+esc(v)+'">' + esc(v) + '</dd>');
+      });
+    }
+    h.push('</dl>');
+    if (r.held){
+      h.push('<div class="np-sec">note</div>');
+      h.push(r.lease.note ? '<div class="m-full">' + esc(r.lease.note) + '</div>' : '<div class="nomsg">no note</div>');
+    }
+    if (r.last_lease){
+      var l = r.last_lease;
+      h.push('<div class="np-sec">last hold</div>');
+      h.push('<div class="m-full"><div class="m-meta"><span>' + esc(holderLabel(l)) + '</span><span>' +
+        esc(releasedHow(l.released_by)) + '</span><span>' + rel(l.released_at) + ' ago</span></div>' +
+        esc(l.note || 'no note') + '</div>');
+    }
+    nodePanel.innerHTML = h.join('');
+    var cl = document.getElementById('npClose');
+    if (cl) cl.onclick = function(){ selected = null; nodePanel.hidden = true; };
+  }
+
   function renderNodePanel(n){
     if (!n){ nodePanel.hidden = true; return; }
+    if (n.kind === 'resource'){ renderResourcePanel(n); return; }
     var a = { session_id:n.id, task:n.task, role:n.role, host:n.host, cwd:n.cwd, state:n.state, last_seen:n.last_seen };
     var ms = messagesFor(a).slice(0, 12);
     var h = ['<div class="np-head">',
@@ -833,7 +1076,9 @@
     var active = a.filter(function(x){return x.state==='active';}).length;
     var hosts = {}; a.forEach(function(x){ if (x.host) hosts[x.host]=1; });
     var nh = Object.keys(hosts).length;
-    summary.textContent = a.length + ' agents · ' + active + ' active' + (nh? ' · ' + nh + ' host' + (nh>1?'s':'') : '');
+    var rs = lastResources, rh = rs.filter(function(r){ return r.held; }).length;
+    summary.textContent = a.length + ' agents · ' + active + ' active' + (nh? ' · ' + nh + ' host' + (nh>1?'s':'') : '') +
+      (rs.length ? ' · ' + rs.length + ' resource' + (rs.length>1?'s':'') + ' (' + rh + ' held)' : '');
     if (view === 'graph'){ buildGraph(); }
     else { renderTable(); }
   }
@@ -844,9 +1089,14 @@
     var url = '/agents' + (gone.checked ? '?all=1' : '');
     Promise.all([
       fetch(url, { headers: { 'X-Registry-Token': t } }).then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
-      fetch('/messages?limit=200', { headers: { 'X-Registry-Token': t } }).then(function(r){ return r.ok ? r.json() : {messages:[]}; })
+      fetch('/messages?limit=200', { headers: { 'X-Registry-Token': t } }).then(function(r){ return r.ok ? r.json() : {messages:[]}; }),
+      // an older server has no /resources; show agents anyway rather than failing the page
+      fetch('/resources' + (gone.checked ? '?all=1' : ''), { headers: { 'X-Registry-Token': t } })
+        .then(function(r){ return r.ok ? r.json() : {resources:[]}; })
+        .catch(function(){ return {resources:[]}; })
     ]).then(function(res){
       lastAgents = res[0]; lastMessages = res[1].messages || [];
+      lastResources = res[2].resources || []; resFetchedAt = Date.now();
       render();
       statusEl.className='status'; statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
     }).catch(function(e){
