@@ -19,7 +19,11 @@ state, an embedded web dashboard.
 
 The dashboard groups live agents by host, draws message handoffs as links, and
 opens a side panel with each agent's task, session, cwd, and recent messages.
-Toggle the **Graph / Table** views, filter `gone`/`idle`, and auto-refresh.
+Resources show as squares — hollow when free, filled when held, amber when the hold
+ends within 10 minutes — tied to their holder by a solid edge. Click one for its
+holder, time left, and the note the last holder left on it; the table view lists
+them all above the agents. Toggle the **Graph / Table** views, filter `gone`/`idle`,
+and auto-refresh.
 
 ## Why
 
@@ -97,8 +101,8 @@ curl -s http://<host>:7070/healthz           # -> ok
   compared in constant time.
 - **Bind to a private interface** and firewall it. agistry is built for a trusted
   LAN — do not expose it to the internet.
-- The web dashboard *shell* is unauthenticated (it holds no secrets); the `/agents`
-  data it fetches is token-protected.
+- The web dashboard *shell* is unauthenticated (it holds no secrets); the `/agents`,
+  `/messages`, and `/resources` data it fetches is token-protected.
 
 ## API
 
