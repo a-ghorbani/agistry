@@ -174,6 +174,13 @@
   #nodePanel.agent { width:410px; top:14px; bottom:14px; max-height:none; padding:0;
        display:flex; flex-direction:column; overflow:hidden; }
   #nodePanel.agent[hidden] { display:none; }
+  /* expanded: wide enough to read a long handoff without scrolling sideways, but still
+     leaving the graph visible behind it */
+  #nodePanel.agent.wide { width:min(920px, calc(100% - 28px)); }
+  .np-head .grow { flex:1; }
+  .np-wide { cursor:pointer; color:var(--faint); border:none; background:none; font-size:13px;
+       line-height:1; padding:3px 5px; border-radius:6px; }
+  .np-wide:hover { color:var(--text); background:var(--hover); }
   .np-top { padding:13px 15px 4px; border-bottom:1px solid var(--border-soft); flex:none; }
   .np-top .np-grid { margin:6px 0 8px; }
   .badge { font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel2);
@@ -191,7 +198,7 @@
   .np-thread .earlier { align-self:center; margin:8px 0 4px; font-size:11.5px; }
   .np-thread .daysep { align-self:center; margin:12px 0 4px; color:var(--faint); font-size:10px;
        letter-spacing:.06em; text-transform:uppercase; }
-  .np-thread .row { display:flex; max-width:86%; margin-top:3px; }
+  .np-thread .row { display:flex; max-width:min(86%, 640px); margin-top:3px; }
   .np-thread .row.turn { margin-top:10px; }
   .np-thread .row.left { align-self:flex-start; }
   .np-thread .row.right { align-self:flex-end; }
@@ -1059,6 +1066,8 @@
   var pchat = { sid:null, me:'', convs:[], convsLoaded:false, convSig:'', withId:'', msgs:[], hasMore:false,
                 seq:0, sig:'', stick:true, err:'', loaded:false, expanded:{}, legacy:false };
   var LONG_BODY = 600;
+  var panelWide = false;
+  try { panelWide = localStorage.getItem('agistry_panel_wide') === '1'; } catch (err) {}
 
   function authHeaders(){ return { 'X-Registry-Token': tok.value.trim() }; }
   // the name the server gives this agent's messages: task:role, or its session id without a role
@@ -1092,6 +1101,9 @@
     return '<span class="dot ' + esc(n.state) + '"></span>' +
       '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>' +
       (n.task ? '<span class="badge">' + esc(n.task) + '</span>' : '') +
+      '<span class="grow"></span>' +
+      '<button class="np-wide" id="npWide" title="' + (panelWide ? 'collapse panel' : 'expand panel') + '">' +
+        (panelWide ? '⤡' : '⤢') + '</button>' +
       '<button class="np-close" id="npClose">×</button>';
   }
   function agentGridHtml(n){
@@ -1115,6 +1127,7 @@
     if (pchat.sid !== n.id || !document.getElementById('npThread')){
       resetPanelChat(n.id, me);
       nodePanel.classList.add('agent');
+      nodePanel.classList.toggle('wide', panelWide);
       nodePanel.innerHTML =
         '<div class="np-top"><div class="np-head" id="npHead">' + agentHeadHtml(n) + '</div>' +
         '<dl class="np-grid" id="npGrid">' + agentGridHtml(n) + '</dl></div>' +
@@ -1272,6 +1285,18 @@
   nodePanel.addEventListener('click', function(e){
     var t = e.target;
     if (t.id === 'npClose'){ selected = null; nodePanel.hidden = true; return; }
+    if (t.id === 'npWide'){
+      var tbw = document.getElementById('npThread');
+      var wasBottom = !tbw || (tbw.scrollHeight - tbw.scrollTop - tbw.clientHeight < 40);
+      panelWide = !panelWide;
+      try { localStorage.setItem('agistry_panel_wide', panelWide ? '1' : '0'); } catch (err) {}
+      nodePanel.classList.toggle('wide', panelWide);
+      t.textContent = panelWide ? '⤡' : '⤢';
+      t.title = panelWide ? 'collapse panel' : 'expand panel';
+      // re-wrapping changes the height, so hold the newest message in view
+      if (wasBottom && tbw) tbw.scrollTop = tbw.scrollHeight;
+      return;
+    }
     if (t.id === 'npEarlier'){ t.disabled = true; t.textContent = 'loading…'; loadPanelThread(true); return; }
     if (t.classList && t.classList.contains('more')){
       var mid = t.getAttribute('data-mid');
