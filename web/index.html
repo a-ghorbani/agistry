@@ -169,6 +169,50 @@
        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .np-sec { color:var(--faint); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
        margin:10px 0 4px; }
+
+  /* ---- agent panel as a chat ---- */
+  #nodePanel.agent { width:410px; top:14px; bottom:14px; max-height:none; padding:0;
+       display:flex; flex-direction:column; overflow:hidden; }
+  #nodePanel.agent[hidden] { display:none; }
+  /* expanded: wide enough to read a long handoff without scrolling sideways, but still
+     leaving the graph visible behind it */
+  #nodePanel.agent.wide { width:min(920px, calc(100% - 28px)); }
+  .np-head .grow { flex:1; }
+  .np-wide { cursor:pointer; color:var(--faint); border:none; background:none; font-size:13px;
+       line-height:1; padding:3px 5px; border-radius:6px; }
+  .np-wide:hover { color:var(--text); background:var(--hover); }
+  .np-top { padding:13px 15px 4px; border-bottom:1px solid var(--border-soft); flex:none; }
+  .np-top .np-grid { margin:6px 0 8px; }
+  .badge { font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel2);
+       border:1px solid var(--border-soft); border-radius:5px; padding:0 6px; }
+  .np-chat { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .np-with { flex:none; padding:9px 12px; border-bottom:1px solid var(--border-soft); color:var(--muted); font-size:12px; }
+  .np-with select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border);
+       border-radius:8px; padding:6px 8px; font:12px var(--ui); }
+  .np-with-one { display:flex; gap:7px; align-items:center; min-height:28px; }
+  .np-with-one b { color:var(--text); font-weight:500; }
+  .np-thread { flex:1; overflow:auto; padding:4px 12px 14px; display:flex; flex-direction:column; }
+  /* like a chat app, a short conversation sits at the bottom, next to where new messages arrive.
+     An id selector, so the later .daysep / .earlier margin shorthands cannot reset it. */
+  #npThread > :first-child { margin-top:auto; }
+  .np-thread .earlier { align-self:center; margin:8px 0 4px; font-size:11.5px; }
+  .np-thread .daysep { align-self:center; margin:12px 0 4px; color:var(--faint); font-size:10px;
+       letter-spacing:.06em; text-transform:uppercase; }
+  .np-thread .row { display:flex; max-width:min(86%, 640px); margin-top:3px; }
+  .np-thread .row.turn { margin-top:10px; }
+  .np-thread .row.left { align-self:flex-start; }
+  .np-thread .row.right { align-self:flex-end; }
+  .np-thread .bubble { padding:7px 10px 5px; border-radius:13px; white-space:pre-wrap; overflow-wrap:anywhere;
+       line-height:1.45; font-size:12.5px; color:var(--text); min-width:64px; }
+  .np-thread .left .bubble { background:var(--panel2); border:1px solid var(--border-soft); border-bottom-left-radius:4px; }
+  .np-thread .right .bubble { background:rgba(91,200,214,.11); border:1px solid rgba(91,200,214,.22); border-bottom-right-radius:4px; }
+  .np-thread .bubble-foot { display:flex; gap:6px; justify-content:flex-end; align-items:center; margin-top:3px;
+       color:var(--faint); font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .np-thread .mark.pend { color:var(--amber); }
+  .np-thread .mark.dead { color:var(--red); }
+  .np-thread .more { display:block; background:none; border:none; padding:2px 0 0; color:var(--cyan); font-size:11.5px; }
+  .np-thread .more:hover { background:none; text-decoration:underline; }
+  .np-thread .chat-empty { margin:auto; padding:24px 10px; color:var(--faint); text-align:center; font-size:12px; }
 </style>
 </head>
 <body>
@@ -1010,9 +1054,266 @@
     if (cl) cl.onclick = function(){ selected = null; nodePanel.hidden = true; };
   }
 
+  // =====================================================================
+  //  AGENT PANEL AS A CHAT
+  // =====================================================================
+  // Clicking an agent shows one of its conversations as a chat, the agent's own messages
+  // on the right, with a picker when it has talked to more than one agent. Loading follows
+  // what is on screen: the picker is a server-side summary, a conversation opens on its
+  // newest page, and earlier pages load only on request. The panel is re-rendered on every
+  // poll, so it builds its frame once per selected agent and then updates in place,
+  // leaving the picker, the scroll position and any text selection alone.
+  var pchat = { sid:null, me:'', convs:[], convsLoaded:false, convSig:'', withId:'', msgs:[], hasMore:false,
+                seq:0, sig:'', stick:true, err:'', loaded:false, expanded:{}, legacy:false };
+  var LONG_BODY = 600;
+  var panelWide = false;
+  try { panelWide = localStorage.getItem('agistry_panel_wide') === '1'; } catch (err) {}
+
+  function authHeaders(){ return { 'X-Registry-Token': tok.value.trim() }; }
+  // the name the server gives this agent's messages: task:role, or its session id without a role
+  function agentIdent(n){ return n.role ? (n.task || '') + ':' + n.role : n.id; }
+  function splitIdent(s){
+    var i = (s || '').indexOf(':');
+    return i < 0 ? { task:'', role:(s || '').slice(0, 8) } : { task:s.slice(0, i), role:s.slice(i + 1) };
+  }
+  function identName(s){ var p = splitIdent(s); return p.role === '*' ? 'everyone in ' + p.task : p.role; }
+  function dayLabel(ts){
+    var d = new Date(ts * 1000), today = new Date(), y = new Date();
+    y.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'today';
+    if (d.toDateString() === y.toDateString()) return 'yesterday';
+    return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  }
+  function clock(ts){ return new Date(ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); }
+
+  function resetPanelChat(sid, me){
+    pchat = { sid:sid, me:me, convs:[], convsLoaded:false, convSig:'', withId:'', msgs:[], hasMore:false,
+              seq:pchat.seq + 1, sig:'', stick:true, err:'', loaded:false, expanded:{}, legacy:pchat.legacy };
+  }
+
   function renderNodePanel(n){
     if (!n){ nodePanel.hidden = true; return; }
-    if (n.kind === 'resource'){ renderResourcePanel(n); return; }
+    if (n.kind === 'resource'){ nodePanel.classList.remove('agent'); pchat.sid = null; renderResourcePanel(n); return; }
+    renderAgentPanel(n);
+  }
+
+  function agentHeadHtml(n){
+    return '<span class="dot ' + esc(n.state) + '"></span>' +
+      '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>' +
+      (n.task ? '<span class="badge">' + esc(n.task) + '</span>' : '') +
+      '<span class="grow"></span>' +
+      '<button class="np-wide" id="npWide" title="' + (panelWide ? 'collapse panel' : 'expand panel') + '">' +
+        (panelWide ? '⤡' : '⤢') + '</button>' +
+      '<button class="np-close" id="npClose">×</button>';
+  }
+  function agentGridHtml(n){
+    return '<dt>host</dt><dd title="' + esc(n.host) + '">' + esc(n.host || '—') + '</dd>' +
+      '<dt>session</dt><dd title="' + esc(n.id) + '">' + esc((n.id || '').slice(0, 16)) + '</dd>' +
+      '<dt>cwd</dt><dd title="' + esc(n.cwd) + '">' + esc(n.cwd || '—') + '</dd>' +
+      '<dt>seen</dt><dd>' + rel(n.last_seen) + ' ago · ' + esc(n.state) + '</dd>';
+  }
+
+  function renderAgentPanel(n){
+    var me = agentIdent(n);
+    if (pchat.legacy){
+      // the server has no /conversations: fall back to the old list, and keep probing so a
+      // restarted server switches to the chat on the next poll
+      nodePanel.classList.remove('agent');
+      if (pchat.sid !== n.id) resetPanelChat(n.id, me);
+      legacyAgentPanel(n);
+      loadPanelConvs();
+      return;
+    }
+    if (pchat.sid !== n.id || !document.getElementById('npThread')){
+      resetPanelChat(n.id, me);
+      nodePanel.classList.add('agent');
+      nodePanel.classList.toggle('wide', panelWide);
+      nodePanel.innerHTML =
+        '<div class="np-top"><div class="np-head" id="npHead">' + agentHeadHtml(n) + '</div>' +
+        '<dl class="np-grid" id="npGrid">' + agentGridHtml(n) + '</dl></div>' +
+        '<div class="np-chat"><div class="np-with" id="npWith"><span class="np-with-one">loading conversations…</span></div>' +
+        '<div class="np-thread" id="npThread"><div class="chat-empty">loading…</div></div></div>';
+    } else {
+      document.getElementById('npHead').innerHTML = agentHeadHtml(n);
+      document.getElementById('npGrid').innerHTML = agentGridHtml(n);
+    }
+    loadPanelConvs();
+  }
+
+  function loadPanelConvs(){
+    var sid = pchat.sid, me = pchat.me;
+    if (!sid) return;
+    fetch('/conversations?limit=100&with=' + encodeURIComponent(me), { headers: authHeaders() })
+      .then(function(r){
+        if (r.status === 404) throw new Error('old-server');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(d){
+        if (pchat.sid !== sid) return;
+        if (pchat.legacy){   // server was upgraded under us: rebuild as a chat
+          pchat.legacy = false; pchat.sid = null;
+          if (selected && nodesById[selected]) renderNodePanel(nodesById[selected]);
+          return;
+        }
+        pchat.convs = d.conversations || []; pchat.convsLoaded = true; pchat.err = '';
+        var others = pchat.convs.map(function(c){ return c.a === me ? c.b : c.a; });
+        if (!pchat.withId || others.indexOf(pchat.withId) < 0){
+          // open on whoever it talked to most recently
+          pchat.withId = others[0] || '';
+          pchat.msgs = []; pchat.hasMore = false; pchat.sig = ''; pchat.stick = true; pchat.loaded = false;
+        }
+        renderWithPicker();
+        loadPanelThread(false);
+      })
+      .catch(function(e){
+        if (pchat.sid !== sid) return;
+        if (e.message === 'old-server'){
+          if (!pchat.legacy){ pchat.legacy = true; if (selected && nodesById[selected]) renderNodePanel(nodesById[selected]); }
+          return;
+        }
+        pchat.err = e.message; pchat.sig = ''; renderPanelThread();
+      });
+  }
+
+  function renderWithPicker(){
+    var el = document.getElementById('npWith');
+    if (!el) return;
+    var me = pchat.me;
+    var sig = pchat.withId + '|' + pchat.convs.map(function(c){ return c.a + '/' + c.b + '/' + c.count + '/' + c.dead_lettered; }).join(',');
+    if (sig === pchat.convSig) return;   // unchanged: do not disturb an open picker
+    pchat.convSig = sig;
+    function label(c){
+      var other = c.a === me ? c.b : c.a, t = splitIdent(other).task;
+      return { other: other,
+        text: identName(other) + (t ? ' · ' + t : '') + ' · ' + c.count + ' message' + (c.count === 1 ? '' : 's') +
+              (c.dead_lettered ? ' · ' + c.dead_lettered + ' never claimed' : '') };
+    }
+    if (!pchat.convs.length){ el.innerHTML = '<span class="np-with-one">no messages to or from this agent</span>'; return; }
+    if (pchat.convs.length === 1){
+      var one = label(pchat.convs[0]);
+      el.innerHTML = '<span class="np-with-one">with <b>' + esc(one.text) + '</b></span>';
+      return;
+    }
+    el.innerHTML = '<select id="npWithSel" title="conversations of this agent">' + pchat.convs.map(function(c){
+      var l = label(c);
+      return '<option value="' + esc(l.other) + '"' + (l.other === pchat.withId ? ' selected' : '') + '>' + esc('with ' + l.text) + '</option>';
+    }).join('') + '</select>';
+  }
+
+  function loadPanelThread(earlier){
+    var sid = pchat.sid, me = pchat.me, other = pchat.withId;
+    if (!sid) return;
+    if (!other){ pchat.sig = ''; renderPanelThread(); return; }
+    var seq = ++pchat.seq;
+    var before = earlier && pchat.msgs.length ? pchat.msgs[0].id : 0;
+    fetch('/conversations/thread?a=' + encodeURIComponent(me) + '&b=' + encodeURIComponent(other) +
+          '&limit=50' + (before ? '&before=' + before : ''), { headers: authHeaders() })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){
+        if (pchat.sid !== sid || pchat.withId !== other) return;   // switched away meanwhile
+        pchat.err = ''; pchat.loaded = true;
+        var page = d.messages || [];
+        if (earlier){
+          var tb = document.getElementById('npThread'), prevH = tb ? tb.scrollHeight : 0, prevTop = tb ? tb.scrollTop : 0;
+          pchat.msgs = page.concat(pchat.msgs);
+          pchat.hasMore = d.has_more;
+          renderPanelThread();
+          tb = document.getElementById('npThread');
+          if (tb) tb.scrollTop = prevTop + (tb.scrollHeight - prevH);   // keep the reader's place
+          return;
+        }
+        if (seq !== pchat.seq) return;   // a newer request superseded this refresh
+        // Fold the newest page into what is loaded. Earlier pages survive when the new page
+        // overlaps what we hold; if not, more than a page arrived since, so drop the earlier
+        // pages rather than show a silent gap.
+        if (!page.length){ pchat.msgs = []; pchat.hasMore = false; }
+        else {
+          var floor = page[0].id;
+          var held = pchat.msgs.length ? pchat.msgs[pchat.msgs.length - 1].id : 0;
+          var keep = held && floor <= held ? pchat.msgs.filter(function(m){ return m.id < floor; }) : [];
+          pchat.msgs = keep.concat(page);
+          if (!keep.length) pchat.hasMore = d.has_more;
+        }
+        renderPanelThread();
+      })
+      .catch(function(e){ if (pchat.sid !== sid) return; pchat.err = e.message; pchat.sig = ''; renderPanelThread(); });
+  }
+
+  function renderPanelThread(){
+    var tb = document.getElementById('npThread');
+    if (!tb) return;
+    var me = pchat.me;
+    // skip identical re-renders, so a poll does not wipe a text selection
+    var sig = pchat.withId + '|' + pchat.hasMore + '|' + pchat.err + '|' + pchat.loaded + '|' + pchat.convsLoaded + '|' +
+      pchat.msgs.map(function(m){ return m.id + (m.delivered ? 'd' : '') + (m.dead_lettered ? 'x' : '') + (pchat.expanded[m.msg_id] ? 'e' : ''); }).join(',');
+    if (sig === pchat.sig) return;
+    pchat.sig = sig;
+
+    var atBottom = pchat.stick || (tb.scrollHeight - tb.scrollTop - tb.clientHeight < 40);
+    var prevTop = tb.scrollTop;
+    var h = [];
+    if (pchat.hasMore) h.push('<button class="earlier" id="npEarlier">load earlier messages</button>');
+    if (!pchat.msgs.length){
+      h.push('<div class="chat-empty">' + (
+        pchat.err ? 'could not load messages: ' + esc(pchat.err)
+        : pchat.convsLoaded && !pchat.withId ? 'no messages to or from this agent yet'
+        : pchat.loaded ? 'no messages in this conversation (they may have aged out)'
+        : 'loading…') + '</div>');
+    }
+    var lastDay = '', lastSide = '';
+    pchat.msgs.forEach(function(m){
+      var day = dayLabel(m.created_at);
+      if (day !== lastDay){ h.push('<div class="daysep">' + esc(day) + '</div>'); lastDay = day; lastSide = ''; }
+      var side = m.from_identity === me ? 'right' : 'left';
+      var body = m.body || '', isLong = body.length > LONG_BODY, clipped = isLong && !pchat.expanded[m.msg_id];
+      var mark = m.dead_lettered ? '<span class="mark dead" title="the recipient never picked this up">✕ never claimed</span>'
+               : m.delivered ? '<span class="mark" title="delivered">✓</span>'
+               : '<span class="mark pend" title="waiting in the mailbox">◷ waiting</span>';
+      h.push('<div class="row ' + side + (side !== lastSide ? ' turn' : '') + '"><div class="bubble" title="' + esc(m.from_identity) + '">' +
+        esc(clipped ? body.slice(0, LONG_BODY) + '…' : body) +
+        (isLong ? '<button class="more" data-mid="' + esc(m.msg_id) + '">' + (clipped ? 'show more' : 'show less') + '</button>' : '') +
+        '<div class="bubble-foot"><span title="' + esc(new Date(m.created_at * 1000).toLocaleString()) + '">' + clock(m.created_at) + '</span>' + mark + '</div>' +
+        '</div></div>');
+      lastSide = side;
+    });
+    tb.innerHTML = h.join('');
+    tb.scrollTop = atBottom ? tb.scrollHeight : prevTop;
+    if (pchat.msgs.length) pchat.stick = false;
+  }
+
+  nodePanel.addEventListener('click', function(e){
+    var t = e.target;
+    if (t.id === 'npClose'){ selected = null; nodePanel.hidden = true; return; }
+    if (t.id === 'npWide'){
+      var tbw = document.getElementById('npThread');
+      var wasBottom = !tbw || (tbw.scrollHeight - tbw.scrollTop - tbw.clientHeight < 40);
+      panelWide = !panelWide;
+      try { localStorage.setItem('agistry_panel_wide', panelWide ? '1' : '0'); } catch (err) {}
+      nodePanel.classList.toggle('wide', panelWide);
+      t.textContent = panelWide ? '⤡' : '⤢';
+      t.title = panelWide ? 'collapse panel' : 'expand panel';
+      // re-wrapping changes the height, so hold the newest message in view
+      if (wasBottom && tbw) tbw.scrollTop = tbw.scrollHeight;
+      return;
+    }
+    if (t.id === 'npEarlier'){ t.disabled = true; t.textContent = 'loading…'; loadPanelThread(true); return; }
+    if (t.classList && t.classList.contains('more')){
+      var mid = t.getAttribute('data-mid');
+      pchat.expanded[mid] = !pchat.expanded[mid];
+      renderPanelThread();
+    }
+  });
+  nodePanel.addEventListener('change', function(e){
+    if (e.target.id !== 'npWithSel') return;
+    pchat.withId = e.target.value;
+    pchat.msgs = []; pchat.hasMore = false; pchat.sig = ''; pchat.convSig = ''; pchat.stick = true; pchat.loaded = false; pchat.err = '';
+    renderWithPicker(); renderPanelThread(); loadPanelThread(false);
+  });
+
+  // The panel before it became a chat: a stacked list. Used only against a server that
+  // predates /conversations.
+  function legacyAgentPanel(n){
     var a = { session_id:n.id, task:n.task, role:n.role, host:n.host, cwd:n.cwd, state:n.state, last_seen:n.last_seen };
     var ms = messagesFor(a).slice(0, 12);
     var h = ['<div class="np-head">',

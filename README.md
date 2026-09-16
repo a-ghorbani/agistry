@@ -22,8 +22,11 @@ opens a side panel with each agent's task, session, cwd, and recent messages.
 Resources show as squares — hollow when free, filled when held, amber when the hold
 ends within 10 minutes — tied to their holder by a solid edge. Click one for its
 holder, time left, and the note the last holder left on it; the table view lists
-them all above the agents. Toggle the **Graph / Table** views, filter `gone`/`idle`,
-and auto-refresh.
+them all above the agents. Clicking an agent shows its messages as a chat: both
+directions of a conversation in one thread, the agent's own messages on the right,
+a delivered / waiting / never claimed mark on each, and a picker when it has talked
+to more than one agent. Toggle **Graph / Table**, filter `gone`/`idle`, and
+auto-refresh.
 
 ## Why
 
@@ -73,6 +76,7 @@ REGISTRY_TOKEN=dev ./agistry
 | `REGISTRY_TOKEN` | _(unset = auth off)_ | Shared bearer token |
 | `REGISTRY_TTL_SECONDS` | `600` | Idle seconds before an agent is marked `gone` |
 | `REGISTRY_PENDING_TTL_SECONDS` | `604800` (7d) | Seconds an unclaimed message waits before it is dead-lettered |
+| `REGISTRY_MESSAGE_RETENTION_SECONDS` | `2592000` (30d) | How long a finished (delivered or dead-lettered) message stays readable as conversation history |
 | `REGISTRY_RESOURCE_TTL_SECONDS` | `900` | Provider silence before a resource is presumed `gone` |
 | `REGISTRY_LEASE_MAX_HOLD_SECONDS` | `3600` | Fallback cap on a single hold, when a resource sets none |
 | `REGISTRY_RESOURCES_FILE` | _(unset)_ | Optional JSON file seeding resources that have no provider to announce them |
@@ -118,7 +122,9 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | POST | `/send` | `{to\|task,role, from, msg, msg_id}` | Queue a message. `to` = `TASK:role` (may be not-yet-joined — late binding) or a live `session_id`. Idempotent on `msg_id`. |
 | GET | `/inbox` | `?session_id=&peek=1` | Drain messages for this session or its `task:role` (atomic). `peek=1` returns without consuming. |
 | POST | `/ack` | `{session_id, msg_ids:[...]}` | Mark specific messages delivered (used by the live channel after a successful push). |
-| GET | `/messages` | `?limit=N` | Read-only recent message feed (does **not** consume). |
+| GET | `/messages` | `?limit=N` | Read-only recent message feed (does **not** consume). Each message carries `from_identity` / `to_identity` — both ends named as `task:role` (or a session id when there is no role) — so replies can be paired with what they answer. |
+| GET | `/conversations` | `?limit=&with=&q=` | Messages regrouped as two-party conversations, most recent first: participants, counts, and a clipped preview of the latest message. `with` keeps only one participant's conversations (exact name). |
+| GET | `/conversations/thread` | `?a=&b=&before=&limit=` | One page of a conversation, both directions, oldest first. Pass the returned `before` to page further back. |
 | POST | `/resources/register` | `{id, kind, name, host, meta, max_hold_seconds}` | Announce/refresh a resource. Idempotent; a refresh revives one that aged out. |
 | POST | `/resources/deregister` | `{id}` | Retire a resource; releases any standing lease. |
 | GET | `/resources` | `?kind=&host=&id=&free=1&held=1&all=1` | The board: what exists, who holds it, until when, and what the last holder left. |
@@ -202,6 +208,10 @@ agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
     what it delivered: **at-least-once into context** (a dropped push is retried).
   - **Manual poll** (`/inbox`) — the agent drains its mailbox on demand; consume-on-read,
     best-effort.
+- **History is kept for a month:** delivered and dead-lettered messages both stay
+  readable for `REGISTRY_MESSAGE_RETENTION_SECONDS` (30 days), so the dashboard's chat
+  panel shows both halves of an exchange. The bodies are short text; the dashboard pages
+  a conversation rather than loading it whole.
 - **Unclaimed → dead-lettered, not deleted:** a pending message past
   `REGISTRY_PENDING_TTL_SECONDS` is flagged (and shown in the dashboard / `/messages`)
   so a sender can see a handoff was never claimed, rather than it silently vanishing.

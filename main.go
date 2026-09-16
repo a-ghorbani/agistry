@@ -68,8 +68,9 @@ func main() {
 	dbPath := env("REGISTRY_DB", "registry.db")
 	token = os.Getenv("REGISTRY_TOKEN")
 	ttl = envInt("REGISTRY_TTL_SECONDS", 600)
-	pendingTTL = envInt("REGISTRY_PENDING_TTL_SECONDS", 604800) // 7d: pending handoffs may wait days
-	resourceTTL = envInt("REGISTRY_RESOURCE_TTL_SECONDS", 900)  // provider silence before a resource is presumed gone
+	pendingTTL = envInt("REGISTRY_PENDING_TTL_SECONDS", 604800)              // 7d: pending handoffs may wait days
+	messageRetention = envInt("REGISTRY_MESSAGE_RETENTION_SECONDS", 2592000) // 30d: finished messages stay readable as conversation history
+	resourceTTL = envInt("REGISTRY_RESOURCE_TTL_SECONDS", 900)               // provider silence before a resource is presumed gone
 	leaseMaxHold = envInt("REGISTRY_LEASE_MAX_HOLD_SECONDS", 3600)
 
 	var err error
@@ -93,8 +94,8 @@ func main() {
 	if token == "" {
 		log.Println("WARNING: REGISTRY_TOKEN unset — auth disabled (dev only)")
 	}
-	log.Printf("agistry listening on %s (db=%s ttl=%ds pending_ttl=%ds resource_ttl=%ds lease_max_hold=%ds)",
-		addr, dbPath, ttl, pendingTTL, resourceTTL, leaseMaxHold)
+	log.Printf("agistry listening on %s (db=%s ttl=%ds pending_ttl=%ds message_retention=%ds resource_ttl=%ds lease_max_hold=%ds)",
+		addr, dbPath, ttl, pendingTTL, messageRetention, resourceTTL, leaseMaxHold)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           routes(),
@@ -118,6 +119,8 @@ func routes() http.Handler {
 	mux.HandleFunc("/inbox", auth(handleInbox))
 	mux.HandleFunc("/ack", auth(handleAck))
 	mux.HandleFunc("/messages", auth(handleMessages))
+	mux.HandleFunc("/conversations", auth(handleConversations))
+	mux.HandleFunc("/conversations/thread", auth(handleConversationThread))
 	mux.HandleFunc("/resources", auth(handleResources))
 	mux.HandleFunc("/resources/register", auth(handleResourceRegister))
 	mux.HandleFunc("/resources/deregister", auth(handleResourceDeregister))
@@ -669,17 +672,23 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	rows, err := db.Query(`
-SELECT msg_id, from_session, to_session, to_task, to_role, body, delivered_at, dead_lettered_at, created_at
-FROM messages ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := db.Query(identitySQL+`
+SELECT id, msg_id, from_session, from_task, from_role, src, to_session, to_task, to_role, dst,
+       body, delivered_at, dead_lettered_at, created_at
+FROM m ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	defer rows.Close()
 	type msg struct {
+		ID           int64  `json:"id"`
 		MsgID        string `json:"msg_id"`
 		From         string `json:"from"`
+		FromTask     string `json:"from_task"`
+		FromRole     string `json:"from_role"`
+		FromIdentity string `json:"from_identity"`
+		ToIdentity   string `json:"to_identity"`
 		ToSession    string `json:"to_session"`
 		ToTask       string `json:"to_task"`
 		ToRole       string `json:"to_role"`
@@ -692,7 +701,8 @@ FROM messages ORDER BY id DESC LIMIT ?`, limit)
 	for rows.Next() {
 		var m msg
 		var deliveredAt, deadAt sql.NullInt64
-		if err := rows.Scan(&m.MsgID, &m.From, &m.ToSession, &m.ToTask, &m.ToRole, &m.Body, &deliveredAt, &deadAt, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.MsgID, &m.From, &m.FromTask, &m.FromRole, &m.FromIdentity,
+			&m.ToSession, &m.ToTask, &m.ToRole, &m.ToIdentity, &m.Body, &deliveredAt, &deadAt, &m.CreatedAt); err != nil {
 			fail(w, err)
 			return
 		}
@@ -717,10 +727,13 @@ func reapOnce(t int64) {
 	if _, err := db.Exec(`UPDATE messages SET dead_lettered_at=? WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND created_at < ?`, t, t-pendingTTL); err != nil {
 		log.Printf("reaper dead-letter: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM messages WHERE delivered_at IS NOT NULL AND delivered_at < ?`, t-86400); err != nil {
+	// Finished messages — delivered or dead-lettered — are kept for the same window. A
+	// shorter window for delivered ones would leave history holding exactly the messages
+	// nobody read, and none of the replies.
+	if _, err := db.Exec(`DELETE FROM messages WHERE delivered_at IS NOT NULL AND delivered_at < ?`, t-messageRetention); err != nil {
 		log.Printf("reaper delivered gc: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM messages WHERE dead_lettered_at IS NOT NULL AND dead_lettered_at < ?`, t-pendingTTL); err != nil {
+	if _, err := db.Exec(`DELETE FROM messages WHERE dead_lettered_at IS NOT NULL AND dead_lettered_at < ?`, t-messageRetention); err != nil {
 		log.Printf("reaper dead-letter gc: %v", err)
 	}
 	reapResources(t)
