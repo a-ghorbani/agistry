@@ -53,7 +53,7 @@ Uninstall with `clients/claude-code/uninstall.sh`.
 - `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
 - `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
 - `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
-- `~/.claude/settings.json` → `hooks.SessionStart` (startup + resume) + `hooks.SessionEnd`
+- `~/.claude/settings.json` → `hooks.SessionStart` (startup, resume, clear) + `hooks.SessionEnd`
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
 - with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
 
