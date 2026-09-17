@@ -55,8 +55,16 @@ polling your inbox.
 - **Research preview** — `--dangerously-load-development-channels` and the channel
   protocol may change; not available on Bedrock / Vertex / Foundry.
 - **Latency** is the poll interval (`AGISTRY_POLL_MS`, default 4000 ms), not instant.
-- **Session id** comes from `$CLAUDE_CODE_SESSION_ID`; if a future Claude Code build
-  stops exposing it to MCP subprocesses, the channel can't address its inbox.
+- **Session id.** Claude spawns the channel once and fixes its
+  `$CLAUDE_CODE_SESSION_ID`, but the session can change under it: a picker
+  `claude --resume` spawns it under a throwaway id, and `/clear` starts a new session.
+  So on every poll the channel first reads
+  `~/.config/agistry/state/by-pid/<claude pid>`, which the SessionStart hook rewrites
+  on startup, resume and clear. The channel uses that file only if it owns it and the
+  process start time recorded in it matches. Otherwise it uses the env id. A channel
+  started before this change keeps its old code until Claude respawns it.
+- **`/clear`** keeps the session's declared task and role, so `TASK:role` mail still
+  arrives. Mail sent to the pre-clear session id stays with that id.
 - **At-least-once wake**: the channel *peeks* (`/inbox?peek=1`) and `/ack`s only the
   messages it actually pushed, so a transport hiccup mid-push is retried on the next
   poll rather than dropped. Identical re-pushes carry a stable `msg_id` for the agent

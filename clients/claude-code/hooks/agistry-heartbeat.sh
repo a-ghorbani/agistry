@@ -59,6 +59,9 @@ reconcile() {
 while :; do
   if [ -n "$WATCH" ] && ! kill -0 "$WATCH" 2>/dev/null; then
     ping deregister   # Claude is gone — leave the party immediately
+    # drop the channel pointer for the dead process, unless a later session owns it
+    PTR="$STATE_DIR/by-pid/$WATCH"
+    [ "$(cut -f1 "$PTR" 2>/dev/null)" = "$SID" ] && rm -f "$PTR"
     break
   fi
   reconcile

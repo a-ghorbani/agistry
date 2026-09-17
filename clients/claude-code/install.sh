@@ -77,7 +77,7 @@ if command -v jq >/dev/null 2>&1; then
     .hooks = (.hooks // {})
     | .hooks.SessionStart = (((.hooks.SessionStart // [])
         | map(select(([.hooks[]?.command] | map(test("agistry-register")) | any) | not)))
-        + [{matcher:"startup|resume", hooks:[{type:"command", command:$reg}]}])
+        + [{matcher:"startup|resume|clear", hooks:[{type:"command", command:$reg}]}])
     | .hooks.SessionEnd = (((.hooks.SessionEnd // [])
         | map(select(([.hooks[]?.command] | map(test("agistry-deregister")) | any) | not)))
         + [{matcher:"*", hooks:[{type:"command", command:$dereg}]}])

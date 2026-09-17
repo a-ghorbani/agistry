@@ -9,12 +9,14 @@
 // the normal agistry skill (`agistry.sh send`).
 //
 // Config: ~/.config/agistry/client.env (AGISTRY_URL, AGISTRY_TOKEN) — same file the
-// hooks/skill use. Session id comes from $CLAUDE_CODE_SESSION_ID. Poll interval
-// from $AGISTRY_POLL_MS (default 4000).
+// hooks/skill use. Session id comes from the pointer file the SessionStart hook writes
+// for the owning Claude process, falling back to $CLAUDE_CODE_SESSION_ID (see
+// currentSid). Poll interval from $AGISTRY_POLL_MS (default 4000).
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,7 +40,8 @@ function loadConfig() {
 }
 
 const { url, token } = loadConfig();
-const sid = process.env.CLAUDE_CODE_SESSION_ID || '';
+const envSid = process.env.CLAUDE_CODE_SESSION_ID || '';
+const stateDir = process.env.AGISTRY_STATE_DIR || join(homedir(), '.config', 'agistry', 'state');
 const pollMs = Number(process.env.AGISTRY_POLL_MS || 4000);
 
 const server = new Server(
@@ -54,7 +57,63 @@ await server.connect(new StdioServerTransport());
 
 const authHeaders = token ? { 'X-Registry-Token': token } : {};
 
+function ps(field, pid) {
+  try {
+    return execFileSync('ps', ['-o', `${field}=`, '-p', String(pid)], {
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().replace(/\s+/g, ' ');
+  } catch {
+    return '';
+  }
+}
+
+// The Claude process that spawned us: the nearest ancestor that is not a shell or a
+// launcher. Claude normally spawns us directly; an npm-installed Claude runs as `node`,
+// so don't look for the name. A wrong guess only means no pointer matches and we use
+// the env id.
+function findOwner() {
+  const skip = new Set(['sh', '-sh', 'bash', '-bash', 'zsh', '-zsh', 'dash', 'fish', 'npx', 'npm', 'env']);
+  let pid = process.ppid;
+  for (let i = 0; i < 8 && pid > 1; i++) {
+    if (!skip.has(ps('comm', pid).split('/').pop())) return pid;
+    pid = Number(ps('ppid', pid)) || 0;
+  }
+  return process.ppid;
+}
+
+const ownerPid = findOwner();
+const ownerStart = ps('lstart', ownerPid);
+let lastSid = envSid;
+
+// The session id to poll for. The env id is fixed when Claude spawns us, but a picker
+// `claude --resume` spawns us under a throwaway id and /clear starts a new session, so
+// the hook's by-pid/<claude pid> file ("<sid>\t<start time>") is preferred. It is
+// trusted only if we own it and its start time matches the process, which rules out a
+// file left behind for a recycled pid.
+function currentSid() {
+  let sid = envSid;
+  if (ownerStart) {
+    try {
+      const f = join(stateDir, 'by-pid', String(ownerPid));
+      if (statSync(f).uid === process.getuid()) {
+        const [ptrSid, start] = readFileSync(f, 'utf8').trim().split('\t');
+        if (ptrSid && start?.trim().replace(/\s+/g, ' ') === ownerStart) sid = ptrSid;
+      }
+    } catch {
+      // no pointer yet — use the env id
+    }
+  }
+  if (sid !== lastSid) {
+    process.stderr.write(`agistry-channel: polling session ${sid} (was ${lastSid || 'none'})\n`);
+    lastSid = sid;
+  }
+  return sid;
+}
+
 async function poll() {
+  const sid = currentSid();
   if (!sid) return; // without a session id we cannot address an inbox
   let data;
   try {
@@ -111,7 +170,7 @@ async function poll() {
 // normal session (because we're listed in mcpServers so the --channels flag can find
 // us) and must stay idle, or we'd silently consume the mailbox. (Channels are a
 // research preview with no documented "am I a channel" signal, hence this env gate;
-// it rides the same env inheritance the channel already uses for CLAUDE_CODE_SESSION_ID.)
+// it rides the same env inheritance that carries CLAUDE_CODE_SESSION_ID.)
 if (process.env.AGISTRY_CHANNEL_ACTIVE === '1') {
   // delay the first poll so a resumed session has settled before we push the first
   // batch (otherwise early pushes can be dropped before the session surfaces them).
