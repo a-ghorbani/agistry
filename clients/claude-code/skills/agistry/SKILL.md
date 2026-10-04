@@ -55,6 +55,8 @@ agistry.sh release adb:R5CT21 "left app-debug sha256:deadbeef resident"
 
 If it is held, the 409 names the holder — **ask, never force**: `agistry.sh send POC-94:e2e "need adb:R5CT21 — done with it?"`
 
+Among free devices that fit the task, prefer the one idle longest (oldest `last_lease.released_at`, or never leased): a recently released one likely still holds another agent's setup that they will come back for.
+
 A lease is **advisory**: it stops collisions, it does not prove the device's state. Keep verifying whatever you already verify.
 
 ## The task-tag
