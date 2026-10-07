@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${TMUX:-}" ]]; then
+  echo "Run tmux-main in a terminal pane outside tmux." >&2
+  exit 1
+fi
+
+mkdir -p "$HOME/.cache"
+tty > "$HOME/.cache/tmux-main-tty"
+# exec keeps this PID, so the sidebar can find the client even if the tty file goes stale.
+echo $$ > "$HOME/.cache/tmux-main-pid"
+
+# The autoname hook renames sessions, so remember the main session by its ID, not "main".
+id_file="$HOME/.cache/tmux-main-session"
+id="$(cat "$id_file" 2>/dev/null || true)"
+if [[ -z "$id" ]] || ! tmux has-session -t "$id" 2>/dev/null; then
+  id="$(tmux new-session -d -P -F '#{session_id}' -s main 2>/dev/null \
+        || tmux display-message -p -t '=main' '#{session_id}')"
+  echo "$id" > "$id_file"
+fi
+exec tmux attach-session -t "$id"

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# agent-state: record a coding agent's state on its own tmux pane, so the sidebar
+# (and anything else reading tmux formats) can show who is working, who is done,
+# and who is blocked on you. Pane options die with the pane, so nothing goes stale
+# across reboots; the sidebar also ignores a state once the pane is back at a shell.
+#
+# Usage:
+#   agent-state KIND STATE   KIND: claude|codex|opencode|pi|...
+#                            STATE: working|waiting|done|idle|off
+#   agent-state KIND         read a Claude Code / Codex hook event from stdin and
+#                            derive STATE from it (both share the same event names)
+#
+# Sets on $TMUX_PANE: @agent_kind, @agent_state, @agent_since (epoch of last change).
+# Always exits 0 and prints nothing: Codex treats plain stdout on Stop as invalid.
+set -u
+
+kind="${1:-}"; state="${2:-}"
+
+# Hooks pipe their event JSON in. Drain it even when STATE is given, so the writer
+# never sees a broken pipe. Never block on a terminal.
+input=""; [ -t 0 ] || input="$(cat)"
+
+[ -n "${TMUX_PANE:-}" ] && [ -n "$kind" ] && command -v tmux >/dev/null 2>&1 || exit 0
+
+pane="$TMUX_PANE"
+current() { tmux display -p -t "$pane" '#{@agent_state}' 2>/dev/null; }
+
+if [ -z "$state" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    # \x1f, not tab: read collapses runs of whitespace IFS, so an empty field would shift.
+    IFS=$'\x1f' read -r event tool ntype < <(printf '%s' "$input" |
+      jq -r '[.hook_event_name // "", .tool_name // "", .notification_type // ""] | join("\u001f")' 2>/dev/null)
+  else
+    event="$(printf '%s' "$input" | sed -n 's/.*"hook_event_name" *: *"\([^"]*\)".*/\1/p')"
+    tool="$(printf '%s' "$input" | sed -n 's/.*"tool_name" *: *"\([^"]*\)".*/\1/p')"
+    ntype="$(printf '%s' "$input" | sed -n 's/.*"notification_type" *: *"\([^"]*\)".*/\1/p')"
+  fi
+  case "${event:-}" in
+    SessionStart)               state=idle ;;
+    UserPromptSubmit|PostToolUse) state=working ;;
+    PreToolUse)
+      # A question tool blocks on the user just like a permission prompt does.
+      case "${tool:-}" in AskUserQuestion|request_user_input) state=waiting ;; *) state=working ;; esac ;;
+    PermissionRequest)          state=waiting ;;
+    Notification)
+      case "${ntype:-}" in
+        permission_prompt|elicitation_dialog) state=waiting ;;
+        # Fires after ~60s with no input. Only trust it to end a "working" that never
+        # got a Stop (an Esc interrupt fires no Stop); never to clear a pending prompt.
+        idle_prompt) [ "$(current)" = working ] && state=done ;;
+      esac ;;
+    Stop|StopFailure|Interrupt) state=done ;;
+    SessionEnd)                 state=off ;;
+  esac
+  [ -n "$state" ] || exit 0
+fi
+
+case "$state" in
+  off)
+    tmux set -pu -t "$pane" @agent_state \; set -pu -t "$pane" @agent_since \
+         \; set -pu -t "$pane" @agent_kind 2>/dev/null ;;
+  working|waiting|done|idle)
+    # Hooks fire on every tool call; only write (and restart the clock) on a change.
+    [ "$(current)" = "$state" ] && exit 0
+    tmux set -p -t "$pane" @agent_kind "$kind" \; set -p -t "$pane" @agent_state "$state" \
+         \; set -p -t "$pane" @agent_since "$(date +%s)" 2>/dev/null ;;
+esac
+exit 0
