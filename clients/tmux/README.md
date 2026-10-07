@@ -82,7 +82,7 @@ and `tmux-sidebar` in a narrow one beside it.
 
 | Key in the sidebar | Does |
 | --- | --- |
-| ↑ ↓, ctrl-p/j/k, page keys, enter, double-click | show that session in the main pane |
+| ↑ ↓, ctrl-p/j/k, page keys, enter, click | show that session in the main pane |
 | type | filter; press enter to jump |
 | ctrl-n | new session in the directory typed as the query (absolute, `~/…`, or relative to `~`), else in `~`, shown in the main pane |
 | ctrl-r | refresh now |

@@ -7,7 +7,7 @@
 #   tmux-sidebar            run the switcher (outside tmux, beside tmux-main)
 #   tmux-sidebar --list     print the rows once (debugging)
 #
-# Keys: ↑↓ (ctrl-p/j/k, page keys, enter, double-click) switch the main client; ctrl-n opens a new session in the
+# Keys: ↑↓ (ctrl-p/j/k, page keys, enter, click) switch the main client; ctrl-n opens a new session in the
 # directory typed as the query (absolute, ~/..., or relative to ~), else in ~.
 
 SELF="$(readlink -f "$0")"
@@ -175,6 +175,7 @@ list_sessions | fzf \
   --header=$'\e[1;31m●\e[0m needs you  \e[33m◐\e[0m working  \e[32m✓\e[0m done\n\e[2mctrl-n new session (in typed dir, else ~)\e[0m' \
   --bind "$(nav_binds)" \
   --bind "enter:execute-silent('$SELF' --switch {1})" \
+  --bind "left-click:execute-silent('$SELF' --switch {1})" \
   --bind "double-click:execute-silent('$SELF' --switch {1})" \
   --bind "load:reload-sync(sleep 2; '$SELF' --list)" \
   --bind "ctrl-r:reload('$SELF' --list)" \
