@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS agents (
   role          TEXT NOT NULL DEFAULT '',
   cwd           TEXT NOT NULL DEFAULT '',
   host          TEXT NOT NULL DEFAULT '',
+  agent_kind    TEXT NOT NULL DEFAULT 'unknown',
   state         TEXT NOT NULL DEFAULT 'unassigned',
   registered_at INTEGER NOT NULL DEFAULT 0,
   last_seen     INTEGER NOT NULL DEFAULT 0
@@ -267,6 +268,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		SessionID string `json:"session_id"`
 		Cwd       string `json:"cwd"`
 		Host      string `json:"host"`
+		AgentKind string `json:"agent_kind"`
 	}
 	if err := readJSON(w, r, &in); err != nil {
 		bad(w, "invalid json")
@@ -276,13 +278,18 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id required")
 		return
 	}
+	if !validAgentKind(in.AgentKind) {
+		bad(w, "agent_kind must be codex, claude, or unknown")
+		return
+	}
 	t := now()
 	_, err := db.Exec(`
-INSERT INTO agents(session_id, cwd, host, state, registered_at, last_seen)
-VALUES(?, ?, ?, 'unassigned', ?, ?)
+INSERT INTO agents(session_id, cwd, host, agent_kind, state, registered_at, last_seen)
+VALUES(?, ?, ?, COALESCE(NULLIF(?, ''), 'unknown'), 'unassigned', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
-  cwd=excluded.cwd, host=excluded.host, last_seen=excluded.last_seen`,
-		in.SessionID, in.Cwd, in.Host, t, t)
+  cwd=excluded.cwd, host=excluded.host, last_seen=excluded.last_seen,
+  agent_kind=CASE WHEN ?<>'' THEN excluded.agent_kind ELSE agents.agent_kind END`,
+		in.SessionID, in.Cwd, in.Host, in.AgentKind, t, t, in.AgentKind)
 	if err != nil {
 		fail(w, err)
 		return
@@ -302,6 +309,7 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 		Role      string `json:"role"`
 		Cwd       string `json:"cwd"`
 		Host      string `json:"host"`
+		AgentKind string `json:"agent_kind"`
 		Force     bool   `json:"force"`
 	}
 	if err := readJSON(w, r, &in); err != nil {
@@ -339,15 +347,20 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !validAgentKind(in.AgentKind) {
+		bad(w, "agent_kind must be codex, claude, or unknown")
+		return
+	}
 	t := now()
 	_, err := db.Exec(`
-INSERT INTO agents(session_id, task, role, cwd, host, state, registered_at, last_seen)
-VALUES(?, ?, ?, ?, ?, 'active', ?, ?)
+INSERT INTO agents(session_id, task, role, cwd, host, agent_kind, state, registered_at, last_seen)
+VALUES(?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'unknown'), 'active', ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
   task=excluded.task, role=excluded.role, state='active', last_seen=excluded.last_seen,
   cwd=CASE WHEN excluded.cwd<>'' THEN excluded.cwd ELSE cwd END,
-  host=CASE WHEN excluded.host<>'' THEN excluded.host ELSE host END`,
-		in.SessionID, in.Task, in.Role, in.Cwd, in.Host, t, t)
+  host=CASE WHEN excluded.host<>'' THEN excluded.host ELSE host END,
+  agent_kind=CASE WHEN ?<>'' THEN excluded.agent_kind ELSE agents.agent_kind END`,
+		in.SessionID, in.Task, in.Role, in.Cwd, in.Host, in.AgentKind, t, t, in.AgentKind)
 	if err != nil {
 		if isUniqueViolation(err) {
 			conflict(w, map[string]any{"error": "role already held on this task"})
@@ -368,26 +381,33 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		SessionID string `json:"session_id"`
 		Cwd       string `json:"cwd"`
 		Host      string `json:"host"`
+		AgentKind string `json:"agent_kind"`
 	}
 	if err := readJSON(w, r, &in); err != nil || in.SessionID == "" {
 		bad(w, "session_id required")
 		return
 	}
+	if !validAgentKind(in.AgentKind) {
+		bad(w, "agent_kind must be codex, claude, or unknown")
+		return
+	}
 	t := now()
 	res, err := db.Exec(`
 UPDATE agents
-SET last_seen=?, state=CASE WHEN role!='' THEN 'active' ELSE 'unassigned' END
-WHERE session_id=?`, t, in.SessionID)
+SET last_seen=?, state=CASE WHEN role!='' THEN 'active' ELSE 'unassigned' END,
+  agent_kind=CASE WHEN ?<>'' THEN ? ELSE agent_kind END
+WHERE session_id=?`, t, in.AgentKind, in.AgentKind, in.SessionID)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		if _, err := db.Exec(`
-INSERT INTO agents(session_id, cwd, host, state, registered_at, last_seen)
-VALUES(?, ?, ?, 'unassigned', ?, ?)
-ON CONFLICT(session_id) DO UPDATE SET last_seen=excluded.last_seen`,
-			in.SessionID, in.Cwd, in.Host, t, t); err != nil {
+INSERT INTO agents(session_id, cwd, host, agent_kind, state, registered_at, last_seen)
+VALUES(?, ?, ?, COALESCE(NULLIF(?, ''), 'unknown'), 'unassigned', ?, ?)
+ON CONFLICT(session_id) DO UPDATE SET last_seen=excluded.last_seen,
+  agent_kind=CASE WHEN ?<>'' THEN excluded.agent_kind ELSE agents.agent_kind END`,
+			in.SessionID, in.Cwd, in.Host, in.AgentKind, t, t, in.AgentKind); err != nil {
 			fail(w, err)
 			return
 		}
@@ -411,7 +431,13 @@ func handleDeregister(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]string{"status": "deregistered"})
 }
 
+// An omitted kind preserves existing metadata; old clients default to unknown.
+func validAgentKind(kind string) bool {
+	return kind == "" || kind == "unknown" || kind == "codex" || kind == "claude"
+}
+
 type agentRow struct {
+	AgentKind    string `json:"agent_kind"`
 	SessionID    string `json:"session_id"`
 	Task         string `json:"task"`
 	Role         string `json:"role"`
@@ -432,6 +458,10 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "task=?")
 		args = append(args, v)
 	}
+	if v := q.Get("agent_kind"); v != "" {
+		where = append(where, "agent_kind=?")
+		args = append(args, v)
+	}
 	if v := q.Get("role"); v != "" {
 		where = append(where, "role=?")
 		args = append(args, v)
@@ -443,7 +473,7 @@ func handleAgents(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "state!='gone'")
 	}
 	rows, err := db.Query(`
-SELECT session_id, task, role, cwd, host, state, registered_at, last_seen
+SELECT session_id, task, role, cwd, host, state, registered_at, last_seen, agent_kind
 FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...)
 	if err != nil {
 		fail(w, err)
@@ -453,7 +483,7 @@ FROM agents WHERE `+strings.Join(where, " AND ")+` ORDER BY task, role`, args...
 	out := []agentRow{}
 	for rows.Next() {
 		var a agentRow
-		if err := rows.Scan(&a.SessionID, &a.Task, &a.Role, &a.Cwd, &a.Host, &a.State, &a.RegisteredAt, &a.LastSeen); err != nil {
+		if err := rows.Scan(&a.SessionID, &a.Task, &a.Role, &a.Cwd, &a.Host, &a.State, &a.RegisteredAt, &a.LastSeen, &a.AgentKind); err != nil {
 			fail(w, err)
 			return
 		}

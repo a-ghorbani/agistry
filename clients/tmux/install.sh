@@ -39,7 +39,7 @@ link() {
 }
 unlink_ours() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ] && rm -f "$1" && echo "  removed $1"; true; }
 
-# Rewrite a Claude-style hooks file: drop every group that runs agent-state, then
+# Rewrite a Claude-style hooks file: drop only handlers that run agent-state, then
 # (unless uninstalling) add one group per event. $3 is a JSON array of
 # [event, matcher-or-null] pairs.
 wire_hooks() { # file kind events-json
@@ -48,8 +48,9 @@ wire_hooks() { # file kind events-json
   cp "$file" "$file.bak.$(date +%s)"
   tmp="$(mktemp)"
   jq --arg cmd "$STATE $kind" --argjson ev "$events" --argjson add "$((1 - UNINSTALL))" '
-    def ours: [.hooks[]?.command // ""] | map(test("agent-state")) | any;
-    .hooks = ((.hooks // {}) | with_entries(.value |= map(select(ours | not)))
+    def ours: (.command // "") | test("agent-state");
+    .hooks = ((.hooks // {}) | with_entries(.value |=
+      (map(.hooks |= map(select(ours | not))) | map(select(.hooks | length > 0))))
                              | with_entries(select(.value | length > 0)))
     | if $add == 1 then
         reduce $ev[] as [$e, $m] (.;
@@ -58,7 +59,8 @@ wire_hooks() { # file kind events-json
              + (if $m == null then {} else {matcher: $m} end))]))
       else . end
     | if .hooks == {} then del(.hooks) else . end
-  ' "$file" > "$tmp" && mv "$tmp" "$file"
+  ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file"
   echo "  hooks $([ $UNINSTALL = 1 ] && echo removed from || echo wired into) $file (backup saved)"
 }
 

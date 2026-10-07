@@ -26,9 +26,9 @@ write_state_stub() { # $1=session_id $2=cwd $3=host
   if have_jq; then
     local base='{}'; [ -f "$f" ] && base="$(jq -c . "$f" 2>/dev/null || echo '{}')"
     printf '%s' "$base" | jq -c --arg s "$1" --arg c "$2" --arg h "$3" \
-      '.session_id=$s | .cwd=$c | .host=$h' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" || rm -f "$tmp"
+      '.agent_kind="claude" | .session_id=$s | .cwd=$c | .host=$h' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" || rm -f "$tmp"
   else
-    printf '{"session_id":"%s","cwd":"%s","host":"%s"}\n' "$1" "$2" "$3" > "$tmp" && mv -f "$tmp" "$f" || rm -f "$tmp"
+    printf '{"agent_kind":"claude","session_id":"%s","cwd":"%s","host":"%s"}\n' "$1" "$2" "$3" > "$tmp" && mv -f "$tmp" "$f" || rm -f "$tmp"
   fi
 }
 
@@ -45,9 +45,9 @@ CWD="$(jget .cwd)"; [ -z "$CWD" ] && CWD="$PWD"
 HOST="$(hostname 2>/dev/null || echo unknown)"
 write_state_stub "$SID" "$CWD" "$HOST"
 if have_jq; then
-  body="$(jq -nc --arg s "$SID" --arg c "$CWD" --arg h "$HOST" '{session_id:$s,cwd:$c,host:$h}')"
+  body="$(jq -nc --arg s "$SID" --arg c "$CWD" --arg h "$HOST" '{session_id:$s,cwd:$c,host:$h,agent_kind:"claude"}')"
 else
-  body="{\"session_id\":\"$SID\",\"cwd\":\"$CWD\",\"host\":\"$HOST\"}"
+  body="{\"agent_kind\":\"claude\",\"session_id\":\"$SID\",\"cwd\":\"$CWD\",\"host\":\"$HOST\"}"
 fi
 
 curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/dev/null 2>&1 || true

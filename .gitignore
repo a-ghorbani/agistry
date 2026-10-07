@@ -11,6 +11,7 @@
 *.env
 # node deps (channel client)
 node_modules/
+__pycache__/
 
 # local systemd unit (deploy/agistry.service is the template to copy + edit)
 /agistry.service
