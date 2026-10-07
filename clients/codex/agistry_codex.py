@@ -234,7 +234,7 @@ class Bridge:
 
     def reconcile(self, sid):
         desired = read_json(self.state_dir / (sid + ".json"))
-        body = {"session_id": sid, "cwd": desired.get("cwd", ""), "host": desired.get("host", "")}
+        body = {"session_id": sid, "agent_kind": "codex", "cwd": desired.get("cwd", ""), "host": desired.get("host", "")}
         if desired.get("role"):
             body.update(task=desired.get("task", ""), role=desired["role"])
         conflict = self.state_dir / (sid + ".conflict")
@@ -248,7 +248,7 @@ class Bridge:
             if error.code != 409:
                 raise
             conflict.write_text("agistry: task:role is already held or identity changed; re-pick and run join.\n")
-            self.registry.call("/heartbeat", {"session_id": sid})
+            self.registry.call("/heartbeat", {"session_id": sid, "agent_kind": "codex"})
             return False
         conflict.unlink(missing_ok=True)
         return True
@@ -369,7 +369,7 @@ class Bridge:
             return
         desired_path = self.state_dir / (sid + ".json")
         desired = read_json(desired_path)
-        desired.update(session_id=sid, cwd=event.get("cwd", os.getcwd()), host=socket.gethostname())
+        desired.update(session_id=sid, agent_kind="codex", cwd=event.get("cwd", os.getcwd()), host=socket.gethostname())
         atomic_json(desired_path, desired)
         atomic_json(lifecycle, {"active": True})
         # A host bridge owns all watched threads; no process-PID heartbeat per session.

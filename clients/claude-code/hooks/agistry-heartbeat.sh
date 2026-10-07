@@ -25,7 +25,7 @@ CONFLICT_FILE="$STATE_DIR/$SID.conflict"
 
 ping() { # $1 = endpoint — bare liveness/identity-less fallback
   curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/$1" \
-    -d "{\"session_id\":\"$SID\"}" >/dev/null 2>&1 || true
+    -d "{\"agent_kind\":\"claude\",\"session_id\":\"$SID\"}" >/dev/null 2>&1 || true
 }
 
 reconcile() {
@@ -40,7 +40,7 @@ reconcile() {
   if [ -n "$role" ]; then
     # replay the full identity — idempotent re-assign of the same role:task is a no-op
     # server-side; only a different live holder makes it conflict.
-    body="$(jq -nc --arg s "$SID" --arg t "$task" --arg r "$role" --arg c "$cwd" --arg h "$host" '{session_id:$s,task:$t,role:$r,cwd:$c,host:$h}')"
+    body="$(jq -nc --arg s "$SID" --arg t "$task" --arg r "$role" --arg c "$cwd" --arg h "$host" '{session_id:$s,task:$t,role:$r,cwd:$c,host:$h,agent_kind:"claude"}')"
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "X-Registry-Token: $TOK" "$URL/assign" -d "$body" 2>/dev/null)"
     if [ "$code" = "409" ]; then
       # lost the (task,role) race / identity conflict — surface to the agent instead of
@@ -51,7 +51,7 @@ reconcile() {
     fi
   else
     # no role declared yet — keep the stub alive (re-creates it if the registry was wiped)
-    body="$(jq -nc --arg s "$SID" --arg c "$cwd" --arg h "$host" '{session_id:$s,cwd:$c,host:$h}')"
+    body="$(jq -nc --arg s "$SID" --arg c "$cwd" --arg h "$host" '{session_id:$s,cwd:$c,host:$h,agent_kind:"claude"}')"
     curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/dev/null 2>&1 || true
   fi
 }

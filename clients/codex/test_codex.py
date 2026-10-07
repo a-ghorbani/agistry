@@ -194,6 +194,7 @@ class BridgeTests(unittest.TestCase):
         assign = [body for path, body in self.registry.calls if path == "/assign"]
         self.assertEqual(assign[0]["task"], "TASK")
         self.assertEqual(assign[0]["role"], "implementer")
+        self.assertEqual(assign[0]["agent_kind"], "codex")
 
     @patch("agistry_codex.subprocess.Popen")
     def test_resume_preserves_identity_and_compaction_does_not_spawn(self, popen):
@@ -203,6 +204,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(read_json(self.bridge.state_dir / (SID + ".json"))["role"], "implementer")
         self.assertEqual(read_json(self.bridge.state_dir / (SID + ".json"))["cwd"], "/new")
         self.assertIn(SID, json.loads(out.getvalue())["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(read_json(self.bridge.state_dir / (SID + ".json"))["agent_kind"], "codex")
         self.assertEqual(popen.call_count, 1)
         event["source"] = "compact"
         self.bridge.hook(event)

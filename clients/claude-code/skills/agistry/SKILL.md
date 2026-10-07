@@ -31,7 +31,7 @@ agistry coordinates **separate, independently-launched top-level sessions** (e.g
 | Command | Endpoint | What it does |
 | --- | --- | --- |
 | `join <role> [task-tag] [--force]` | `POST /assign` | Declare THIS session's role (e.g. implementer, reviewer, researcher) and its `task-tag`. Pass `--force` only to deliberately change an identity you already declared. |
-| `who [task] [role]` | `GET /agents` | List agents (the party). Filter by task and/or role. |
+| `who [task] [role] [--kind codex|claude|unknown]` | `GET /agents` | List agents (the party). Filter by task, role, or agent kind. Each entry reports `agent_kind`; older clients appear as `unknown`. |
 | `send <to> <msg>` | `POST /send` | Message another agent. `to` = a `session_id` (full, or a unique short prefix like `8edb7472`) or `TASK:role` (e.g. `POC-31:implementer`). A bare role name does NOT work — use `TASK:role`. Durable — waits in their mailbox. |
 | `inbox` | `GET /inbox` | Drain messages addressed to YOU (this session / your task:role). |
 | `heartbeat` | `POST /heartbeat` | Mark yourself still alive (the registry ages out silent agents). |

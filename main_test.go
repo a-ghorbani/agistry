@@ -321,3 +321,46 @@ func TestAuthRejectsWithoutToken(t *testing.T) {
 		t.Fatalf("with token: want 200, got %d", code)
 	}
 }
+
+func TestAgentKindLifecycle(t *testing.T) {
+	setup(t)
+	for _, endpoint := range []string{"/register", "/assign", "/heartbeat"} {
+		sid := strings.TrimPrefix(endpoint, "/")
+		body := `{"session_id":"` + sid + `","role":"reviewer","agent_kind":"codex"}`
+		if code, m := do(t, "POST", endpoint, body); code != 200 {
+			t.Fatalf("%s: %d %v", endpoint, code, m)
+		}
+		// All three endpoints must preserve the known kind when an old client omits it.
+		for _, update := range []string{"/register", "/assign", "/heartbeat"} {
+			if code, m := do(t, "POST", update, `{"session_id":"`+sid+`","role":"reviewer"}`); code != 200 {
+				t.Fatalf("%s: %d %v", update, code, m)
+			}
+		}
+	}
+	_, m := do(t, "GET", "/agents?agent_kind=codex&role=reviewer", "")
+	if m["count"] != float64(3) {
+		t.Fatalf("kind lost during reconciliation: %v", m)
+	}
+	for _, entry := range m["agents"].([]any) {
+		if entry.(map[string]any)["agent_kind"] != "codex" {
+			t.Fatalf("wrong kind: %v", entry)
+		}
+	}
+	do(t, "POST", "/deregister", `{"session_id":"register"}`)
+	do(t, "POST", "/heartbeat", `{"session_id":"register","agent_kind":"claude"}`)
+	_, m = do(t, "GET", "/agents?agent_kind=claude", "")
+	if m["count"] != float64(1) || m["agents"].([]any)[0].(map[string]any)["state"] != "active" {
+		t.Fatalf("heartbeat did not restore liveness and kind: %v", m)
+	}
+	for _, endpoint := range []string{"/register", "/assign", "/heartbeat"} {
+		sid := "old-" + strings.TrimPrefix(endpoint, "/")
+		do(t, "POST", endpoint, `{"session_id":"`+sid+`","role":"reviewer"}`)
+		if code, m := do(t, "POST", endpoint, `{"session_id":"`+sid+`","role":"reviewer","agent_kind":"invalid"}`); code != 400 {
+			t.Fatalf("invalid kind accepted by %s: %d %v", endpoint, code, m)
+		}
+	}
+	_, m = do(t, "GET", "/agents?agent_kind=unknown", "")
+	if m["count"] != float64(3) {
+		t.Fatalf("old clients should default to unknown: %v", m)
+	}
+}

@@ -65,6 +65,8 @@
   td.path, td.host { color:var(--muted); font-family:var(--mono); font-size:12px; }
   td.path { white-space:nowrap; max-width:300px; overflow:hidden; text-overflow:ellipsis; }
   td.sid { font-family:var(--mono); font-size:12px; color:var(--muted); }
+  .agent-label { display:inline-flex; align-items:center; gap:6px; }
+  .agent-logo { width:16px; height:16px; flex:none; vertical-align:middle; }
   td.role { font-weight:500; }
   td.num { color:var(--muted); font-variant-numeric:tabular-nums; }
   td.seen { color:var(--faint); font-variant-numeric:tabular-nums; }
@@ -216,6 +218,14 @@
 </style>
 </head>
 <body>
+<!-- User-selected SVG marks. Provenance: web/LOGOS.md. One vector source
+     serves inline SVG labels and Canvas Path2D rendering. -->
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    <symbol id="logo-codex" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"/></symbol>
+    <symbol id="logo-claude" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"/></symbol>
+  </defs>
+</svg>
 <header>
   <div class="brand"><h1>agistry</h1><span id="summary" class="summary"></span></div>
   <span class="grow"></span>
@@ -223,6 +233,12 @@
     <button data-view="graph">Graph</button>
     <button data-view="table">Table</button>
   </div>
+  <select id="agentKind" aria-label="Agent kind">
+    <option value="">All agents</option>
+    <option value="codex">Codex</option>
+    <option value="claude">Claude Code</option>
+    <option value="unknown">Unknown</option>
+  </select>
   <input id="tok" type="password" placeholder="registry token" size="20">
   <label class="chk"><input id="gone" type="checkbox"> gone</label>
   <label class="chk" id="idleWrap"><input id="idle" type="checkbox"> idle</label>
@@ -242,6 +258,8 @@
     <div id="graphEmpty" class="graph-empty">no agents to plot</div>
     <div class="legend">
       <span><span class="dot active"></span>active</span>
+      <span><svg class="agent-logo" aria-hidden="true"><use href="#logo-codex"/></svg>Codex</span>
+      <span><svg class="agent-logo" aria-hidden="true"><use href="#logo-claude"/></svg>Claude Code</span>
       <span><span class="dot unassigned"></span>idle</span>
       <span><span class="dot gone"></span>gone</span>
       <span><span class="dot pending"></span>pending msg</span>
@@ -262,6 +280,8 @@
 <script>
 (function(){
   var tok = document.getElementById('tok');
+  var agentKind = document.getElementById('agentKind');
+  agentKind.value = localStorage.getItem('agistry_agent_kind') || '';
   var gone = document.getElementById('gone');
   var idle = document.getElementById('idle');
   var idleWrap = document.getElementById('idleWrap');
@@ -414,13 +434,47 @@
     return out.join('');
   }
 
+  function agentKindOf(a){
+    return a.agent_kind === 'codex' || a.agent_kind === 'claude' ? a.agent_kind : 'unknown';
+  }
+  function agentKindName(a){
+    return {codex:'Codex', claude:'Claude Code', unknown:'Unknown'}[agentKindOf(a)];
+  }
+  function filteredAgents(){
+    return (lastAgents.agents || []).filter(function(a){
+      return !agentKind.value || agentKindOf(a) === agentKind.value;
+    });
+  }
+
+  function agentKindLabel(a){
+    var kind = agentKindOf(a);
+    return '<span class="agent-label">' + (kind === 'unknown' ? '' :
+      '<svg class="agent-logo" aria-hidden="true"><use href="#logo-' + kind + '"/></svg>') +
+      agentKindName(a) + '</span>';
+  }
+
+  // Preserve the supplied SVG paths, including their transparent cutouts.
+  // State owns the circle color; the logo uses a darker shade of that color.
+  var agentLogoPaths = {};
+  ['codex', 'claude'].forEach(function(kind){
+    agentLogoPaths[kind] = new Path2D(document.querySelector('#logo-' + kind + ' path').getAttribute('d'));
+  });
+  function drawAgentMark(p, x, y, radius){
+    var path = agentLogoPaths[agentKindOf(p)];
+    if (!path || radius < 5) return;
+    var size = radius * 1.45;
+    ctx.save(); ctx.translate(x - size/2, y - size/2); ctx.scale(size/24, size/24);
+    ctx.fillStyle = p.state === 'active' ? '#123d2b' : p.state === 'gone' ? '#57231f' : '#242830';
+    ctx.fill(path, 'evenodd'); ctx.restore();
+  }
+
   function renderTable(){
-    var a = lastAgents.agents || [];
+    var a = filteredAgents();
     var resHtml = resourcesTableHtml();
     if (!a.length){ body.innerHTML = resHtml + '<div class="empty">no agents registered</div>'; return; }
     var rows = [resHtml, resHtml ? '<div class="section">agents <b>' + a.length + '</b></div>' : '',
       '<table><thead><tr>',
-      '<th></th><th>Role</th><th>State</th><th>Session</th><th>Host</th>',
+      '<th></th><th>Role</th><th>Agent</th><th>State</th><th>Session</th><th>Host</th>',
       '<th>Msgs</th><th>Seen</th><th>Cwd</th></tr></thead><tbody>'];
     var lastTask = null;
     a.forEach(function(x){
@@ -429,13 +483,14 @@
         var tk = x.task || '';
         var tag = tk ? '<span class="tag" title="' + esc(tk) + '">' + esc(tk) + '</span>'
                      : '<span class="none">no task</span>';
-        rows.push('<tr class="taskhdr"><td colspan="8">' + tag + '</td></tr>');
+        rows.push('<tr class="taskhdr"><td colspan="9">' + tag + '</td></tr>');
       }
       var open = !!expanded[x.session_id];
       var mc = messagesFor(x).length;
       rows.push('<tr class="member">' +
         '<td class="caret" data-sid="' + esc(x.session_id) + '"><span class="chev' + (open?' open':'') + '">›</span></td>' +
         '<td class="role">' + esc(x.role || '—') + '</td>' +
+        '<td class="agent-kind">' + agentKindLabel(x) + '</td>' +
         '<td><span class="state"><span class="dot ' + esc(x.state||'unassigned') + '"></span>' + esc(x.state) + '</span></td>' +
         '<td class="sid" title="' + esc(x.session_id) + '">' + esc((x.session_id||'').slice(0,8)) + '</td>' +
         '<td class="host">' + esc(x.host || '—') + '</td>' +
@@ -444,7 +499,7 @@
         '<td class="path" title="' + esc(x.cwd||'') + '">' + esc(x.cwd || '—') + '</td>' +
       '</tr>');
       if (open){
-        rows.push('<tr class="detail"><td colspan="8">' + detailHtml(x) + '</td></tr>');
+        rows.push('<tr class="detail"><td colspan="9">' + detailHtml(x) + '</td></tr>');
       }
     });
     rows.push('</tbody></table>');
@@ -515,8 +570,8 @@
 
   function nodeRadius(n){
     if (n.kind === 'resource') return 7.5;
-    var base = 6 + Math.min(14, n.deg * 2.2);
-    if (n.idle) base = 4.5;
+    var base = 12 + Math.min(14, n.deg * 2.2);
+    if (n.idle) base = 9;
     return base;
   }
 
@@ -538,7 +593,7 @@
   }
 
   function buildGraph(){
-    var agents = (lastAgents.agents || []).slice();
+    var agents = filteredAgents();
     var showIdle = idle.checked;
 
     // figure out which agents are visible
@@ -560,6 +615,7 @@
               y: Math.sin(ang)*rad + (Math.random()-0.5)*20, vx:0, vy:0 };
         nodesById[a.session_id] = n;
       }
+      n.agent_kind = agentKindOf(a);
       n.role = a.role || '';
       n.task = a.task || '';
       n.host = a.host || '';
@@ -834,6 +890,7 @@
         ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(237,237,239,0.6)';
         ctx.beginPath(); ctx.arc(s.x,s.y,r+3,0,Math.PI*2); ctx.stroke();
       }
+      drawAgentMark(p, s.x, s.y, r);
       ctx.restore();
 
       // label (role or short sid) — hide for idle unless zoomed/hover
@@ -1107,7 +1164,8 @@
       '<button class="np-close" id="npClose">×</button>';
   }
   function agentGridHtml(n){
-    return '<dt>host</dt><dd title="' + esc(n.host) + '">' + esc(n.host || '—') + '</dd>' +
+    return '<dt>agent</dt><dd>' + agentKindLabel(n) + '</dd>' +
+      '<dt>host</dt><dd title="' + esc(n.host) + '">' + esc(n.host || '—') + '</dd>' +
       '<dt>session</dt><dd title="' + esc(n.id) + '">' + esc((n.id || '').slice(0, 16)) + '</dd>' +
       '<dt>cwd</dt><dd title="' + esc(n.cwd) + '">' + esc(n.cwd || '—') + '</dd>' +
       '<dt>seen</dt><dd>' + rel(n.last_seen) + ' ago · ' + esc(n.state) + '</dd>';
@@ -1321,6 +1379,7 @@
       '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>',
       '<button class="np-close" id="npClose">×</button></div>'];
     h.push('<dl class="np-grid">');
+    h.push('<dt>agent</dt><dd>' + agentKindLabel(n) + '</dd>');
     h.push('<dt>state</dt><dd>' + esc(n.state) + '</dd>');
     h.push('<dt>task</dt><dd title="'+esc(n.task)+'">' + esc(n.task || '—') + '</dd>');
     h.push('<dt>host</dt><dd title="'+esc(n.host)+'">' + esc(n.host || '—') + '</dd>');
@@ -1373,7 +1432,7 @@
   });
 
   function render(){
-    var a = lastAgents.agents || [];
+    var a = filteredAgents();
     var active = a.filter(function(x){return x.state==='active';}).length;
     var hosts = {}; a.forEach(function(x){ if (x.host) hosts[x.host]=1; });
     var nh = Object.keys(hosts).length;
@@ -1413,6 +1472,10 @@
 
   document.getElementById('refresh').onclick = load;
   every.onchange = schedule;
+  agentKind.onchange = function(){
+    localStorage.setItem('agistry_agent_kind', agentKind.value);
+    render();
+  };
   gone.onchange = load;
   idle.onchange = function(){ if (view==='graph') buildGraph(); };
   tok.onchange = load;

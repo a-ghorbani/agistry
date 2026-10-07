@@ -23,6 +23,11 @@ set -uo pipefail
 URL="${AGISTRY_URL:-http://127.0.0.1:7070}"
 TOK="${AGISTRY_TOKEN:-}"
 SID="${AGISTRY_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
+AGENT_KIND="${AGISTRY_AGENT_KIND:-}"
+if [ -z "$AGENT_KIND" ]; then
+  if [ -n "${CODEX_THREAD_ID:-}" ]; then AGENT_KIND=codex
+  elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then AGENT_KIND=claude; fi
+fi
 STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
 AUTH=(-H "X-Registry-Token: $TOK")
 
@@ -81,19 +86,19 @@ write_state() { # $1=task $2=role
   mkdir -p "$STATE_DIR" 2>/dev/null || return 0
   tmp="$(mktemp "$STATE_DIR/.tmp.XXXXXX" 2>/dev/null)" || return 0
   [ -f "$f" ] && base="$(jq -c . "$f" 2>/dev/null || echo '{}')"
-  printf '%s' "$base" | jq -c --arg s "$SID" --arg t "$1" --arg r "$2" \
-    '.session_id=$s | .task=$t | .role=$r' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" || rm -f "$tmp"
+  printf '%s' "$base" | jq -c --arg s "$SID" --arg t "$1" --arg r "$2" --arg k "$AGENT_KIND" \
+    '.session_id=$s | .task=$t | .role=$r | if $k!="" then .agent_kind=$k else . end' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" || rm -f "$tmp"
 }
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   register)
-    need_sid; post /register "$(jobj session_id="$SID" cwd="${1:-$PWD}" host="$(hostname 2>/dev/null || echo unknown)")" ;;
+    need_sid; post /register "$(jobj session_id="$SID" agent_kind="$AGENT_KIND" cwd="${1:-$PWD}" host="$(hostname 2>/dev/null || echo unknown)")" ;;
   join|assign)
     need_sid
     role="${1:?role required}"; task="${2:-}"; force=""
     case "${3:-}" in --force|force) force=1 ;; esac
-    body="$(jobj session_id="$SID" role="$role" task="$task" cwd="$PWD" host="$(hostname 2>/dev/null || echo unknown)")"
+    body="$(jobj session_id="$SID" agent_kind="$AGENT_KIND" role="$role" task="$task" cwd="$PWD" host="$(hostname 2>/dev/null || echo unknown)")"
     # force is a JSON boolean, not a string — inject it raw (jobj's --arg quotes values)
     [ -n "$force" ] && body="${body%\}},\"force\":true}"
     resp="$(curl -s --max-time 5 "${AUTH[@]}" "$URL/assign" -d "$body")"
@@ -103,8 +108,18 @@ case "$cmd" in
     case "$resp" in *'"status":"assigned"'*) write_state "$task" "$role" ;; esac ;;
   who|agents)
     params=()
-    [ -n "${1:-}" ] && params+=("task=$1")
-    [ -n "${2:-}" ] && params+=("role=$2")
+    position=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --kind)
+          [ $# -ge 2 ] || { echo "--kind requires codex, claude, or unknown" >&2; exit 1; }
+          case "$2" in codex|claude|unknown) params+=("agent_kind=$2") ;; *) echo "invalid agent kind: $2" >&2; exit 1 ;; esac
+          shift 2 ;;
+        *)
+          case "$position" in 0) params+=("task=$1") ;; 1) params+=("role=$1") ;; *) echo "usage: who [task] [role] [--kind codex|claude|unknown]" >&2; exit 1 ;; esac
+          position=$((position+1)); shift ;;
+      esac
+    done
     qs=""; [ ${#params[@]} -gt 0 ] && qs="?$(IFS='&'; echo "${params[*]}")"
     get "/agents$qs" ;;
   send)
@@ -114,7 +129,7 @@ case "$cmd" in
   inbox)
     need_sid; get "/inbox?session_id=$SID" ;;
   heartbeat)
-    need_sid; post /heartbeat "$(jobj session_id="$SID")" ;;
+    need_sid; post /heartbeat "$(jobj session_id="$SID" agent_kind="$AGENT_KIND")" ;;
   leave|deregister)
     need_sid; post /deregister "$(jobj session_id="$SID")" ;;
 

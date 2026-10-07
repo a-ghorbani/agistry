@@ -1,8 +1,8 @@
 # agistry
 
 A lightweight, fault-tolerant **registry + mailbox** for coordinating agent
-processes — for example, multiple [Claude Code](https://claude.com/claude-code)
-instances. It answers *who is working on which task, in which role*, and gives
+processes — for example, [Codex](https://developers.openai.com/codex/) and
+[Claude Code](https://claude.com/claude-code) instances. It answers *who is working on which task, in which role*, and gives
 them a durable mailbox to hand off to each other. Single Go binary, SQLite for
 state, an embedded web dashboard.
 
@@ -26,7 +26,8 @@ them all above the agents. Clicking an agent shows its messages as a chat: both
 directions of a conversation in one thread, the agent's own messages on the right,
 a delivered / waiting / never claimed mark on each, and a picker when it has talked
 to more than one agent. Toggle **Graph / Table**, filter `gone`/`idle`, and
-auto-refresh.
+auto-refresh. Agent circles contain the Codex or Claude Code SVG logo in a darker state color; unknown clients keep a plain circle. The table and detail panel
+show the full agent name, and the agent-kind filter applies to both views.
 
 ## Why
 
@@ -114,11 +115,11 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 
 | Method | Path | Body / query | Purpose |
 | --- | --- | --- | --- |
-| POST | `/register` | `{session_id, cwd, host}` | Identity stub. Idempotent; never clobbers role. |
-| POST | `/assign` | `{session_id, task, role, cwd, host, force}` | Set role/task. `task` must be a short tag (≤40 chars, no spaces). Single owner per `task:role` (409 if held). Refuses to change an existing identity without `force:true`. |
-| POST | `/heartbeat` | `{session_id, cwd, host}` | Bump liveness; revives a `gone` entry and re-creates a stub if the session is unknown (e.g. after a registry wipe). |
+| POST | `/register` | `{session_id, cwd, host, agent_kind}` | Identity stub. Idempotent; never clobbers role. |
+| POST | `/assign` | `{session_id, task, role, cwd, host, agent_kind, force}` | Set role/task. `task` must be a short tag (≤40 chars, no spaces). Single owner per `task:role` (409 if held). Refuses to change an existing identity without `force:true`. |
+| POST | `/heartbeat` | `{session_id, cwd, host, agent_kind}` | Bump liveness; revives a `gone` entry and re-creates a stub if the session is unknown (e.g. after a registry wipe). |
 | POST | `/deregister` | `{session_id}` | Mark `gone`. |
-| GET | `/agents` | `?task=&role=&state=&all=1` | Who's doing what. Hides `gone` unless `all=1`. |
+| GET | `/agents` | `?task=&role=&agent_kind=&state=&all=1` | Who's doing what. Hides `gone` unless `all=1`. |
 | POST | `/send` | `{to\|task,role, from, msg, msg_id}` | Queue a message. `to` = `TASK:role` (may be not-yet-joined — late binding) or a live `session_id`. Idempotent on `msg_id`. |
 | GET | `/inbox` | `?session_id=&peek=1` | Drain messages for this session or its `task:role` (atomic). `peek=1` returns without consuming. |
 | POST | `/ack` | `{session_id, msg_ids:[...]}` | Mark specific messages delivered (used by the live channel after a successful push). |
@@ -133,6 +134,15 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | POST | `/resources/release` | `{resource_id, session_id, note}` | Hand it back. The `note` becomes the record of what you left on it. |
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
+
+`agent_kind` accepts `codex`, `claude`, or `unknown`. Omit it to preserve an
+existing value; new sessions from older clients default to `unknown`. Client
+hooks and reconcilers report their own kind. The shared CLI accepts
+`who [task] [role] --kind codex` (also `claude` or `unknown`).
+
+The `agent_kind` column changes the database schema. Follow the clean-cutover
+policy below when upgrading an existing registry; rebuilding the binary alone
+does not update an old database.
 
 ### Examples
 
