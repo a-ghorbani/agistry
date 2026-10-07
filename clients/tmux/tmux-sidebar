@@ -24,26 +24,38 @@ main_client() {
     END { if (!found && fallback) print fallback }'
 }
 
-# One row per session: "<session_id>\t<display>". One ps and one tmux call, joined in
-# awk, because fzf re-runs this every 2s.
+# One row per session: "<session_id>\t<display>", under a header row (empty id) per
+# project: the git repo of the session's agent pane, worktrees folded into their repo,
+# else its directory. Within a project, sessions that need you come first. With a query
+# ($1) the headers go and each row carries its project instead, so typing a project name
+# still finds its sessions. One ps and one tmux call (plus a git call per directory),
+# joined in awk, because fzf re-runs this every 2s.
 list_sessions() {
-  local F=$'\t'
-  awk -v statedir="$STATE_DIR" -v now="$(date +%s)" '
-    # file 1: processes. lstart is formatted the way agistry-register.sh stores it
+  local F=$'\t' panes
+  panes="$(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}${F}#{pane_current_path}")"
+  awk -v statedir="$STATE_DIR" -v now="$(date +%s)" -v home="$HOME" -v query="${1:-}" '
+    FNR == 1 { file++ }
+    # file 1: directory -> the common git dir its worktrees share, if it is in a repo
+    file == 1 {
+      split($0, a, "\t")
+      if (a[2] ~ /\/\.git$/) repo[a[1]] = substr(a[2], 1, length(a[2]) - 5)
+      next
+    }
+    # file 2: processes. lstart is formatted the way agistry-register.sh stores it
     # (UTC, C locale, single spaces), so a by-pid file can be checked against it.
-    FNR == NR {
+    file == 2 {
       n = split($0, a, " ")
       comm[a[1]] = a[8]
       start[a[1]] = a[3] " " a[4] " " a[5] " " a[6] " " a[7]
       kids[a[2]] = kids[a[2]] " " a[1]
       next
     }
-    # file 2: panes
+    # file 3: panes
     {
       split($0, f, "\t")
       sid = f[1]; cmd = f[6]; title = f[7]; st = f[8]; since = f[9]; kind = f[10]
       if (!(sid in seen)) { seen[sid] = 1; order[++nsess] = sid; name[sid] = f[2]
-                            wins[sid] = f[3]; att[sid] = f[4] }
+                            wins[sid] = f[3]; att[sid] = f[4]; dir[sid] = f[11] }
 
       agent = (cmd == "claude" || cmd == "codex" || cmd == "opencode" || cmd == "pi")
       # A state is only live while its agent still owns the pane; once the pane is back
@@ -53,25 +65,55 @@ list_sessions() {
 
       p = prio(st) + (agent ? 1 : 0)
       if (!(sid in best) || p > best[sid]) {
-        best[sid] = p; bstate[sid] = st; bsince[sid] = since
+        best[sid] = p; bstate[sid] = st; bsince[sid] = since; dir[sid] = f[11]
         if (lab != "") blabel[sid] = lab
       }
       if (blabel[sid] == "" && lab != "") blabel[sid] = lab
     }
     END {
       for (i = 1; i <= nsess; i++) {
-        s = order[i]; st = bstate[s]
+        s = order[i]; idx[i] = s
+        root = (dir[s] in repo) ? repo[dir[s]] : dir[s]
+        proj[s] = root == home ? "~" : basename(root)
+        count[proj[s]]++
+        key[i] = tolower(proj[s]) "\t" (100 - prio(bstate[s])) "\t" tolower(name[s])
+      }
+      for (i = 2; i <= nsess; i++)                    # insertion sort; a few dozen rows
+        for (j = i; j > 1 && key[j - 1] > key[j]; j--) {
+          t = key[j]; key[j] = key[j - 1]; key[j - 1] = t
+          t = idx[j]; idx[j] = idx[j - 1]; idx[j - 1] = t
+        }
+      for (i = 1; i <= nsess; i++) {
+        s = idx[i]; st = bstate[s]; pr = proj[s]
+        if (query == "" && pr != last) printf "\t\033[2m── %s (%d)\033[0m\n", pr, count[pr]
+        last = pr
+        sn = short(name[s], pr)
+        if (query != "") sn = pr "/" sn
         g = st == "waiting" ? "\033[1;31m●\033[0m" : st == "working" ? "\033[33m◐\033[0m" \
           : st == "done" ? "\033[32m✓\033[0m" : " "
         age = (st == "waiting" || st == "done") && bsince[s] ? ago(now - bsince[s]) : ""
         line = g " "
-        if (blabel[s] != "") line = line "\033[1m" blabel[s] "\033[0m  \033[2m" name[s] "\033[0m"
-        else line = line name[s]
+        if (blabel[s] != "") line = line "\033[1m" blabel[s] "\033[0m  \033[2m" sn "\033[0m"
+        else line = line sn
         if (wins[s] > 1) line = line " \033[2m[" wins[s] "]\033[0m"
         if (age != "") line = line " \033[2m" age "\033[0m"
         if (att[s] > 0) line = line " \033[36m◀\033[0m"
         printf "%s\t%s\n", s, line
       }
+    }
+
+    function basename(p) {
+      sub(/\/+$/, "", p)
+      return p == "" ? "/" : substr(p, match(p, /[^\/]*$/))
+    }
+    # The session name minus its project, which the header already shows:
+    # "proj-founder-advisory-board-cd-2" -> "cd-2". Separators (- _ . :) compare equal.
+    function short(n, pr,    nn, pp, i, r) {
+      nn = tolower(n); pp = tolower(pr)
+      gsub(/[-_.:]/, "-", nn); gsub(/[-_.:]/, "-", pp)
+      if (pp == "~" || !(i = index(nn, pp))) return n
+      r = substr(n, i + length(pp)); sub(/^[-_.:]+/, "", r)
+      return r == "" ? n : r
     }
 
     function prio(st) {
@@ -119,8 +161,11 @@ list_sessions() {
       if (task == "") return ""
       return role != "" ? task " · " role : task
     }
-  ' <(LC_ALL=C TZ=UTC ps -eo pid=,ppid=,lstart=,comm=) \
-    <(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}")
+  ' <(cut -f11 <<<"$panes" | sort -u | while IFS= read -r d; do
+        printf '%s\t%s\n' "$d" "$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+      done) \
+    <(LC_ALL=C TZ=UTC ps -eo pid=,ppid=,lstart=,comm=) \
+    <(printf '%s\n' "$panes")
 }
 
 # New detached session in the query's directory (else ~), shown in the main client.
@@ -145,11 +190,12 @@ case "${1:-}" in
     new_session "${2:-}"
     exit ;;
   --switch)
+    [[ -n "${2:-}" ]] || exit                     # a project header row
     client="$(main_client)"
     [[ -n "$client" ]] && tmux switch-client -c "$client" -t "$2"
     exit ;;
   --list)
-    list_sessions
+    list_sessions "${2:-}"
     exit ;;
 esac
 
@@ -177,6 +223,7 @@ list_sessions | fzf \
   --bind "enter:execute-silent('$SELF' --switch {1})" \
   --bind "left-click:execute-silent('$SELF' --switch {1})" \
   --bind "double-click:execute-silent('$SELF' --switch {1})" \
-  --bind "load:reload-sync(sleep 2; '$SELF' --list)" \
-  --bind "ctrl-r:reload('$SELF' --list)" \
+  --bind "load:reload-sync(sleep 2; '$SELF' --list {q})" \
+  --bind "change:reload('$SELF' --list {q})" \
+  --bind "ctrl-r:reload('$SELF' --list {q})" \
   --bind "ctrl-n:execute-silent('$SELF' --new {q})+clear-query+reload('$SELF' --list)"

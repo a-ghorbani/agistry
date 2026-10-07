@@ -16,7 +16,7 @@ sessions whose tmux names (`proj-myrepo-claude-2`) say nothing.
 | Piece | What it does |
 | --- | --- |
 | `tmux-main` | Attaches the "main" tmux client (kept alive when its session ends) and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Remembers the main session by id, since names change. |
-| `tmux-sidebar` | fzf switcher for the `tmux-main` client. Per session: state glyph, **label**, the tmux name, and how long it has been waiting/done. Refreshes every 2s from one `ps` + one `tmux` call. |
+| `tmux-sidebar` | fzf switcher for the `tmux-main` client. Sessions are grouped under a header per project (the git repo of the agent's pane, worktrees folded in, else its directory), with sessions that need you first within each. Per session: state glyph, **label**, the tmux name minus the project, and how long it has been waiting/done. While you type a query, the headers go and each row shows `project/name`. Refreshes every 2s from one `ps` + one `tmux` call (and a `git` call per directory). |
 | `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex hook event read from stdin. |
 | `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code and Codex need no adapter — their hooks call `agent-state` directly. |
 | `install.sh` | Symlinks the scripts into `~/bin` and wires every agent found on the host. Idempotent; `--uninstall` removes the hooks and agent-state. |
