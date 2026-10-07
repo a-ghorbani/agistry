@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# tmux-sidebar: an fzf session switcher for the tmux-main client that shows, next to
+# each session, what its agent is doing (agistry task, else the pane title the agent
+# set) and whether it is working, done, or blocked on you (@agent_state, written by
+# agent-state from each agent's hooks).
+#
+#   tmux-sidebar            run the switcher (outside tmux, beside tmux-main)
+#   tmux-sidebar --list     print the rows once (debugging)
+
+SELF="$(readlink -f "$0")"
+STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
+
+# Resolve the tmux-main client at switch time: by PID first, then the saved tty.
+main_client() {
+  local pid tty
+  pid="$(cat "$HOME/.cache/tmux-main-pid" 2>/dev/null)"
+  tty="$(cat "$HOME/.cache/tmux-main-tty" 2>/dev/null)"
+  tmux list-clients -F '#{client_pid} #{client_tty}' | awk -v pid="$pid" -v tty="$tty" '
+    $1 == pid { print $2; found = 1; exit }
+    $2 == tty { fallback = $2 }
+    END { if (!found && fallback) print fallback }'
+}
+
+# One row per session: "<session_id>\t<display>". One ps and one tmux call, joined in
+# awk, because fzf re-runs this every 2s.
+list_sessions() {
+  local F=$'\t'
+  awk -v statedir="$STATE_DIR" -v now="$(date +%s)" '
+    # file 1: processes. lstart is formatted the way agistry-register.sh stores it
+    # (UTC, C locale, single spaces), so a by-pid file can be checked against it.
+    FNR == NR {
+      n = split($0, a, " ")
+      comm[a[1]] = a[8]
+      start[a[1]] = a[3] " " a[4] " " a[5] " " a[6] " " a[7]
+      kids[a[2]] = kids[a[2]] " " a[1]
+      next
+    }
+    # file 2: panes
+    {
+      split($0, f, "\t")
+      sid = f[1]; cmd = f[6]; title = f[7]; st = f[8]; since = f[9]; kind = f[10]
+      if (!(sid in seen)) { seen[sid] = 1; order[++nsess] = sid; name[sid] = f[2]
+                            wins[sid] = f[3]; att[sid] = f[4] }
+
+      agent = (cmd == "claude" || cmd == "codex" || cmd == "opencode" || cmd == "pi")
+      # A state is only live while its agent still owns the pane; once the pane is back
+      # at a shell (agent exited without SessionEnd), ignore what it left behind.
+      if (!agent || kind != cmd) st = ""
+      lab = agent ? label(cmd, f[5], title) : ""
+
+      p = prio(st) + (agent ? 1 : 0)
+      if (!(sid in best) || p > best[sid]) {
+        best[sid] = p; bstate[sid] = st; bsince[sid] = since
+        if (lab != "") blabel[sid] = lab
+      }
+      if (blabel[sid] == "" && lab != "") blabel[sid] = lab
+    }
+    END {
+      for (i = 1; i <= nsess; i++) {
+        s = order[i]; st = bstate[s]
+        g = st == "waiting" ? "\033[1;31m●\033[0m" : st == "working" ? "\033[33m◐\033[0m" \
+          : st == "done" ? "\033[32m✓\033[0m" : " "
+        age = (st == "waiting" || st == "done") && bsince[s] ? ago(now - bsince[s]) : ""
+        line = g " "
+        if (blabel[s] != "") line = line "\033[1m" blabel[s] "\033[0m  \033[2m" name[s] "\033[0m"
+        else line = line name[s]
+        if (wins[s] > 1) line = line " \033[2m[" wins[s] "]\033[0m"
+        if (age != "") line = line " \033[2m" age "\033[0m"
+        if (att[s] > 0) line = line " \033[36m◀\033[0m"
+        printf "%s\t%s\n", s, line
+      }
+    }
+
+    function prio(st) {
+      return st == "waiting" ? 40 : st == "working" ? 30 : st == "done" ? 20 : st == "idle" ? 10 : 0
+    }
+    function ago(d) {
+      return d < 60 ? "" : d < 3600 ? int(d / 60) "m" : d < 86400 ? int(d / 3600) "h" : int(d / 86400) "d"
+    }
+    # Claude: the agistry task/role it joined with. Everyone: the title the agent set,
+    # minus its decorations. Empty when the title is only a default.
+    function label(cmd, ppid, title,    pid, t) {
+      if (cmd == "claude" && (pid = find(ppid, "claude", 2)) != "" && (t = agistry(pid)) != "")
+        return t
+      t = title
+      if (cmd == "claude") {
+        sub(/^[^ -~]+ /, "", t); sub(/ [^ -~]+$/, "", t)        # "✳ topic ⑂" -> "topic"
+        if (t ~ /^([Cc]laude( |$)|$)/) t = ""
+      } else if (cmd == "codex") {
+        sub(/ \| [^|]*$/, "", t)                                 # "topic | project"
+        if (t ~ /^([Cc]odex)?$/) t = ""
+      } else if (cmd == "opencode") {
+        if (t == "OpenCode" || !sub(/^OC \| /, "", t)) t = ""    # "OC | topic"
+      } else if (cmd == "pi") {                                  # "π - name - dir" | "π - dir"
+        if (sub(/^[^ ]+ - /, "", t) && match(t, /^.* - /)) t = substr(t, 1, RLENGTH - 3)
+        else t = ""
+      }
+      return t
+    }
+    function find(pid, want, depth,    k, n, i, r) {
+      if (comm[pid] == want) return pid
+      if (depth == 0) return ""
+      n = split(kids[pid], k, " ")
+      for (i = 1; i <= n; i++) if ((r = find(k[i], want, depth - 1)) != "") return r
+      return ""
+    }
+    function agistry(pid,    line, a, json, task, role) {
+      if ((getline line < (statedir "/by-pid/" pid)) <= 0) return ""
+      close(statedir "/by-pid/" pid)
+      split(line, a, "\t")
+      if (a[2] != start[pid]) return ""            # file left behind by a recycled pid
+      if ((getline json < (statedir "/" a[1] ".json")) <= 0) return ""
+      close(statedir "/" a[1] ".json")
+      if (match(json, /"task":"[^"]*"/)) task = substr(json, RSTART + 8, RLENGTH - 9)
+      if (match(json, /"role":"[^"]*"/)) role = substr(json, RSTART + 8, RLENGTH - 9)
+      if (task == "") return ""
+      return role != "" ? task " · " role : task
+    }
+  ' <(LC_ALL=C TZ=UTC ps -eo pid=,ppid=,lstart=,comm=) \
+    <(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}")
+}
+
+case "${1:-}" in
+  --switch)
+    client="$(main_client)"
+    [[ -n "$client" ]] && tmux switch-client -c "$client" -t "$2"
+    exit ;;
+  --list)
+    list_sessions
+    exit ;;
+esac
+
+list_sessions | fzf \
+  --ansi \
+  --delimiter=$'\t' \
+  --with-nth=2.. \
+  --layout=reverse \
+  --no-multi \
+  --no-info \
+  --track \
+  --header=$'\e[1;31m●\e[0m needs you  \e[33m◐\e[0m working  \e[32m✓\e[0m done   ↻ 2s' \
+  --bind "focus:execute-silent('$SELF' --switch {1})" \
+  --bind "enter:execute-silent('$SELF' --switch {1})" \
+  --bind "load:reload-sync(sleep 2; '$SELF' --list)" \
+  --bind "ctrl-r:reload('$SELF' --list)"
