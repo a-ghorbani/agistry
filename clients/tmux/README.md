@@ -15,10 +15,11 @@ sessions whose tmux names (`proj-myrepo-claude-2`) say nothing.
 
 | Piece | What it does |
 | --- | --- |
+| `tmux-main` | Attaches the "main" tmux client and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Remembers the main session by id, since names change. |
 | `tmux-sidebar` | fzf switcher for the `tmux-main` client. Per session: state glyph, **label**, the tmux name, and how long it has been waiting/done. Refreshes every 2s from one `ps` + one `tmux` call. |
 | `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex hook event read from stdin. |
 | `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code and Codex need no adapter — their hooks call `agent-state` directly. |
-| `install.sh` | Symlinks the scripts into `~/bin` and wires every agent found on the host. Idempotent; `--uninstall` reverses it. |
+| `install.sh` | Symlinks the scripts into `~/bin` and wires every agent found on the host. Idempotent; `--uninstall` removes the hooks and agent-state. |
 
 ## Labels: never rename, annotate
 
@@ -57,8 +58,27 @@ one left behind by a crash disappears once the pane is back at a shell.
 clients/tmux/install.sh
 ```
 
-- Claude Code picks up the hooks live.
-- Codex skips new hooks until trusted: run `/hooks` once in a Codex session.
-- Restart opencode and pi sessions to load the plugin/extension.
+That one command covers everything on this host:
+
+- links `tmux-main`, `tmux-sidebar` and `agent-state` into `~/bin` (an existing real
+  file there is kept as `<name>.bak.<timestamp>`);
+- wires hooks for each agent it finds (`~/.claude`, `~/.codex`, `~/.config/opencode`,
+  `~/.pi/agent`); agents that aren't installed are skipped — re-run after installing one.
+
+What it can't do for you:
+
+- **Codex** skips new hooks until trusted: run `/hooks` once in a Codex session.
+- **Restart** running Codex, opencode and pi sessions to load the hooks. Claude Code
+  picks them up live.
+- **Prerequisites:** tmux 3.0+, fzf, jq. The installer warns if fzf or tmux is missing.
+- **agistry labels** need the [Claude Code client](../claude-code/) installed (it
+  writes the state files the sidebar reads). Without it, Claude sessions fall back
+  to their pane title.
+
+## Use
+
+Outside tmux, split your terminal into two panes: run `tmux-main` in the wide one
+and `tmux-sidebar` in a narrow one beside it. Moving the cursor in the sidebar
+switches the main client to that session.
 
 Debug with `tmux-sidebar --list`, or `tmux list-panes -a -F '#{session_name} #{@agent_kind}/#{@agent_state}'`.

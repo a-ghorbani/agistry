@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Installs the tmux client: agent-state + tmux-sidebar into ~/bin (symlinks, so
-# edits here go live), and wires agent-state into every agent found on this host:
+# Installs the tmux client: tmux-main, tmux-sidebar and agent-state into ~/bin
+# (symlinks, so edits here go live), and wires agent-state into every agent found
+# on this host:
 #   Claude Code  hooks in ~/.claude/settings.json      (merged, backup saved)
 #   Codex        hooks in ~/.codex/hooks.json          (merged, backup saved; trust once via /hooks)
 #   opencode     plugin  ~/.config/opencode/plugins/agent-state.js   (symlink)
 #   pi           extension ~/.pi/agent/extensions/agent-state.ts     (symlink)
-# Safe to re-run. --uninstall removes all of it (the sidebar link stays, see below).
+# Safe to re-run. --uninstall removes the hooks and agent-state (the tmux-main and
+# tmux-sidebar links stay; they work without it).
 #
 # Usage: ./install.sh [--uninstall]
 set -euo pipefail
@@ -17,11 +19,15 @@ UNINSTALL=0
 case "${1:-}" in
   --uninstall) UNINSTALL=1 ;;
   "") ;;
-  -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 1 ;;
 esac
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+# Pane options (set -p) need tmux 3.0+.
+for dep in tmux fzf; do
+  command -v "$dep" >/dev/null 2>&1 || echo "  WARNING: $dep not found — the sidebar needs it" >&2
+done
 
 # Link $2 -> $1, keeping a real file that is in the way as a timestamped backup.
 link() {
@@ -68,6 +74,7 @@ echo "$([ $UNINSTALL = 1 ] && echo Uninstalling || echo Installing) agistry tmux
 
 if [ $UNINSTALL = 0 ]; then
   link "$HERE/agent-state" "$STATE"
+  link "$HERE/tmux-main" "$BIN/tmux-main"
   link "$HERE/tmux-sidebar" "$BIN/tmux-sidebar"
 fi
 
@@ -83,7 +90,7 @@ if [ $UNINSTALL = 1 ]; then
   unlink_ours "$OC" "$HERE/adapters/opencode-agent-state.js"
   unlink_ours "$PI" "$HERE/adapters/pi-agent-state.ts"
   unlink_ours "$STATE" "$HERE/agent-state"
-  echo "  left $BIN/tmux-sidebar in place (it works without agent-state); restore a .bak if you want the old one"
+  echo "  left $BIN/tmux-main and $BIN/tmux-sidebar in place (they work without agent-state)"
 else
   [ -d "$HOME/.config/opencode" ] && link "$HERE/adapters/opencode-agent-state.js" "$OC"
   [ -d "$HOME/.pi/agent" ] && link "$HERE/adapters/pi-agent-state.ts" "$PI"
