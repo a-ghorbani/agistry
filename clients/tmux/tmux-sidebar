@@ -6,6 +6,9 @@
 #
 #   tmux-sidebar            run the switcher (outside tmux, beside tmux-main)
 #   tmux-sidebar --list     print the rows once (debugging)
+#
+# Keys: ↑↓ (ctrl-p/j/k, page keys, enter, double-click) switch the main client; ctrl-n opens a new session in the
+# directory typed as the query (absolute, ~/..., or relative to ~), else in ~.
 
 SELF="$(readlink -f "$0")"
 STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
@@ -120,7 +123,27 @@ list_sessions() {
     <(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}")
 }
 
+# New detached session in the query's directory (else ~), shown in the main client.
+new_session() {
+  local q="${1:-}" dir="$HOME" d name id client
+  q="${q/#\~/$HOME}"
+  if [[ -n "$q" ]]; then
+    for d in "$q" "$HOME/$q"; do
+      [[ -d "$d" ]] && { dir="$(cd "$d" && pwd)"; break; }
+    done
+  fi
+  # Name it after the directory; tmux refuses a taken name, so fall back to its own.
+  name="$(basename "$dir")"; name="${name//[.:]/_}"
+  id="$(tmux new-session -d -P -F '#{session_id}' -s "$name" -c "$dir" 2>/dev/null \
+        || tmux new-session -d -P -F '#{session_id}' -c "$dir")" || return
+  client="$(main_client)"
+  [[ -n "$client" ]] && tmux switch-client -c "$client" -t "$id"
+}
+
 case "${1:-}" in
+  --new)
+    new_session "${2:-}"
+    exit ;;
   --switch)
     client="$(main_client)"
     [[ -n "$client" ]] && tmux switch-client -c "$client" -t "$2"
@@ -130,6 +153,17 @@ case "${1:-}" in
     exit ;;
 esac
 
+# Switch on navigation keys, not on fzf's focus event: focus also fires when a reload
+# moves the cursor (a session ended, one was created), and that would yank the main
+# client away from where tmux or ctrl-n just put it.
+nav_binds() {
+  local k out=""
+  for k in up:up down:down ctrl-p:up ctrl-k:up ctrl-j:down page-up:page-up page-down:page-down; do
+    out+="${out:+,}${k%%:*}:${k#*:}+execute-silent('$SELF' --switch {1})"
+  done
+  printf '%s' "$out"
+}
+
 list_sessions | fzf \
   --ansi \
   --delimiter=$'\t' \
@@ -138,8 +172,10 @@ list_sessions | fzf \
   --no-multi \
   --no-info \
   --track \
-  --header=$'\e[1;31m●\e[0m needs you  \e[33m◐\e[0m working  \e[32m✓\e[0m done   ↻ 2s' \
-  --bind "focus:execute-silent('$SELF' --switch {1})" \
+  --header=$'\e[1;31m●\e[0m needs you  \e[33m◐\e[0m working  \e[32m✓\e[0m done\n\e[2mctrl-n new session (in typed dir, else ~)\e[0m' \
+  --bind "$(nav_binds)" \
   --bind "enter:execute-silent('$SELF' --switch {1})" \
+  --bind "double-click:execute-silent('$SELF' --switch {1})" \
   --bind "load:reload-sync(sleep 2; '$SELF' --list)" \
-  --bind "ctrl-r:reload('$SELF' --list)"
+  --bind "ctrl-r:reload('$SELF' --list)" \
+  --bind "ctrl-n:execute-silent('$SELF' --new {q})+clear-query+reload('$SELF' --list)"

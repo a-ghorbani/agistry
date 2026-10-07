@@ -15,7 +15,7 @@ sessions whose tmux names (`proj-myrepo-claude-2`) say nothing.
 
 | Piece | What it does |
 | --- | --- |
-| `tmux-main` | Attaches the "main" tmux client and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Remembers the main session by id, since names change. |
+| `tmux-main` | Attaches the "main" tmux client (kept alive when its session ends) and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Remembers the main session by id, since names change. |
 | `tmux-sidebar` | fzf switcher for the `tmux-main` client. Per session: state glyph, **label**, the tmux name, and how long it has been waiting/done. Refreshes every 2s from one `ps` + one `tmux` call. |
 | `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex hook event read from stdin. |
 | `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code and Codex need no adapter — their hooks call `agent-state` directly. |
@@ -78,7 +78,20 @@ What it can't do for you:
 ## Use
 
 Outside tmux, split your terminal into two panes: run `tmux-main` in the wide one
-and `tmux-sidebar` in a narrow one beside it. Moving the cursor in the sidebar
-switches the main client to that session.
+and `tmux-sidebar` in a narrow one beside it.
+
+| Key in the sidebar | Does |
+| --- | --- |
+| ↑ ↓, ctrl-p/j/k, page keys, enter, double-click | show that session in the main pane |
+| type | filter; press enter to jump |
+| ctrl-n | new session in the directory typed as the query (absolute, `~/…`, or relative to `~`), else in `~`, shown in the main pane |
+| ctrl-r | refresh now |
+
+The sidebar switches only on those keys, not whenever its cursor moves, so a
+refresh never pulls the main pane somewhere else.
+
+Exiting the session on screen doesn't end `tmux-main`: it sets tmux's global
+`detach-on-destroy off`, so the client moves to the most recently active session
+instead of detaching. (Global, so other clients on the same server behave the same.)
 
 Debug with `tmux-sidebar --list`, or `tmux list-panes -a -F '#{session_name} #{@agent_kind}/#{@agent_state}'`.
