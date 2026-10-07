@@ -19,4 +19,8 @@ if [[ -z "$id" ]] || ! tmux has-session -t "$id" 2>/dev/null; then
         || tmux display-message -p -t '=main' '#{session_id}')"
   echo "$id" > "$id_file"
 fi
+# When the session on screen ends (exit, kill-session), move to the most recently
+# active remaining session instead of detaching and ending tmux-main. It is a session
+# option and the main client roams every session, so it has to be global.
+tmux set -g detach-on-destroy off
 exec tmux attach-session -t "$id"
