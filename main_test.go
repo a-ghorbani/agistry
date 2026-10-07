@@ -63,6 +63,30 @@ func TestRegisterAssignAgents(t *testing.T) {
 	}
 }
 
+func TestUnassignedResumeRestoresLiveness(t *testing.T) {
+	setup(t)
+	do(t, "POST", "/register", `{"session_id":"unassigned","cwd":"/old","host":"box"}`)
+	do(t, "POST", "/deregister", `{"session_id":"unassigned"}`)
+	// Register refreshes metadata, but heartbeat is required to revive the session.
+	do(t, "POST", "/register", `{"session_id":"unassigned","cwd":"/new","host":"box"}`)
+	if liveSession("unassigned") {
+		t.Fatal("register alone unexpectedly revived a gone session")
+	}
+	do(t, "POST", "/heartbeat", `{"session_id":"unassigned"}`)
+	code, agents := do(t, "GET", "/agents", "")
+	if code != 200 || agents["count"].(float64) != 1 {
+		t.Fatalf("resumed session missing: %v", agents)
+	}
+	agent := agents["agents"].([]any)[0].(map[string]any)
+	if agent["state"] != "unassigned" || agent["cwd"] != "/new" {
+		t.Fatalf("unexpected resumed identity: %v", agent)
+	}
+	code, message := do(t, "POST", "/send", `{"to":"unassigned","from":"reviewer","msg":"welcome back"}`)
+	if code != 200 || message["status"] != "queued" {
+		t.Fatalf("resumed session rejected direct mail: %v", message)
+	}
+}
+
 func TestSendInboxDrainsOnce(t *testing.T) {
 	setup(t)
 	do(t, "POST", "/register", `{"session_id":"impl"}`)

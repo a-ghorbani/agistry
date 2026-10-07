@@ -197,6 +197,12 @@ agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
 
 ## Delivery model
 
+Codex sessions can use the [Codex client](clients/codex/README.md): lifecycle
+hooks register presence and a local bridge forwards mailbox messages through
+`codex queue`. It supports the local shared Codex daemon; busy turns receive
+follow-ups after finishing, and idle threads can dispatch them immediately.
+The existing Claude Code live channel remains available for Claude sessions.
+
 - The **mailbox is the source of truth** — durable, survives the target being offline.
 - **Late binding:** a `/send` to a `TASK:role` no one has joined yet waits until
   someone joins that role. A `/send` to a *session id* that matches no live agent is

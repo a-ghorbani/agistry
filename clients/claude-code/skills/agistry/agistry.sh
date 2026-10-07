@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agistry CLI — a thin, authenticated wrapper over the agistry registry API for use
-# from a Claude Code session. Reads the registry URL + token from
-# ~/.config/agistry/client.env and this session's id from $CLAUDE_CODE_SESSION_ID,
+# from a coding agent session. Reads the registry URL + token from
+# ~/.config/agistry/client.env and the provider's session id,
 # so callers never handle the token directly.
 #
 # Usage:
@@ -22,7 +22,7 @@ set -uo pipefail
 [ -f "$HOME/.config/agistry/client.env" ] && . "$HOME/.config/agistry/client.env"
 URL="${AGISTRY_URL:-http://127.0.0.1:7070}"
 TOK="${AGISTRY_TOKEN:-}"
-SID="${CLAUDE_CODE_SESSION_ID:-}"
+SID="${AGISTRY_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
 STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
 AUTH=(-H "X-Registry-Token: $TOK")
 
@@ -57,7 +57,7 @@ jobj() {
   fi
 }
 
-need_sid() { [ -n "$SID" ] || { echo '{"error":"CLAUDE_CODE_SESSION_ID not set"}'; exit 1; }; }
+need_sid() { [ -n "$SID" ] || { echo '{"error":"Set AGISTRY_SESSION_ID, CODEX_THREAD_ID, or CLAUDE_CODE_SESSION_ID"}'; exit 1; }; }
 
 # jobj quotes every value as a JSON string; ttl/max_hold must go over the wire as
 # numbers, so splice them in raw after validating they really are digits.
