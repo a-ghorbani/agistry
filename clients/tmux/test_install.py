@@ -12,7 +12,7 @@ class InstallTests(unittest.TestCase):
         installer = Path(__file__).resolve().with_name("install.sh")
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            files = [home / ".claude/settings.json", home / ".codex/hooks.json"]
+            files = [home / ".claude/settings.json", home / ".claude-work1/settings.json", home / ".codex/hooks.json"]
             unrelated = {"type": "command", "command": "/custom/record-session", "timeout": 7}
             for file in files:
                 file.parent.mkdir()

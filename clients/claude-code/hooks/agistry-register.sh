@@ -7,6 +7,9 @@
 set -u
 
 input="$(cat)"
+# This hook lives in <profile>/hooks, so its parent is the Claude profile it was
+# installed into (~/.claude, or e.g. ~/.claude-work1 under CLAUDE_CONFIG_DIR).
+CLAUDE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$HOME/.config/agistry/client.env" ] && . "$HOME/.config/agistry/client.env"
 URL="${AGISTRY_URL:-http://127.0.0.1:7070}"
 TOK="${AGISTRY_TOKEN:-}"
@@ -100,7 +103,7 @@ fi
 
 # Start the heartbeat daemon so this session stays present while Claude is alive,
 # even when idle.
-HB="$HOME/.claude/hooks/agistry-heartbeat.sh"
+HB="$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
 PIDFILE="${TMPDIR:-/tmp}/agistry-hb-$SID.pid"
 if [ -x "$HB" ] && { [ ! -f "$PIDFILE" ] || ! kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; }; then
   nohup "$HB" "$SID" "$cpid" >/dev/null 2>&1 &
@@ -114,14 +117,15 @@ fi
 # matter how many sessions call it. On a host that permanently owns devices, prefer the
 # user service in clients/providers/ over this.
 if [ -n "${AGISTRY_PROVIDERS:-}" ] && [ "${AGISTRY_PROVIDERS_AUTOSTART:-0}" = "1" ]; then
-  PROV="$HOME/.claude/providers/agistry-providers.sh"
+  PROV="$CLAUDE_DIR/providers/agistry-providers.sh"
   [ -x "$PROV" ] && nohup "$PROV" start >/dev/null 2>&1 &
 fi
 
 # SessionStart stdout is injected into the agent's context — seed the role-register trigger.
+SKILL_SH="${CLAUDE_DIR/#"$HOME"/"~"}/skills/agistry/agistry.sh"
 cat <<NUDGE
 [agistry] This session ($SID) joined the agent registry at $URL.
-As soon as it is clear what your task is, register yourself to the registry with your clear task and role by using the agistry skill (run: ~/.claude/skills/agistry/agistry.sh join <role> <task>).
+As soon as it is clear what your task is, register yourself to the registry with your clear task and role by using the agistry skill (run: $SKILL_SH join <role> <task>).
 You can also use the agistry skill to see who else is working (who) and to message or hand off to other agents (send/inbox).
 NUDGE
 exit 0
