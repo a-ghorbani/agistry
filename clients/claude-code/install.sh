@@ -2,7 +2,8 @@
 # Installs the agistry Claude Code client (hooks + skill, optionally the channel)
 # into ~/.claude, and idempotently wires the SessionStart/SessionEnd hooks into
 # ~/.claude/settings.json. Safe to re-run. Resolves its own location, so it works
-# from any directory.
+# from any directory. Set CLAUDE_DIR to install into another profile (the dir you
+# point CLAUDE_CONFIG_DIR at), e.g. CLAUDE_DIR=~/.claude-work1 ./install.sh.
 #
 # Usage:
 #   ./install.sh [--url http://HOST:7070] [--token TOKEN] [--with-channel] [--with-statusline]
@@ -11,6 +12,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 CFG="$HOME/.config/agistry/client.env"
+# How the profile is shown to the agent (~-relative), and the env prefix the claude
+# CLI needs to act on a non-default profile.
+CLAUDE_DIR_SHOWN="${CLAUDE_DIR/#"$HOME"/"~"}"
+if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then CLI_ENV=""; else CLI_ENV="CLAUDE_CONFIG_DIR=$CLAUDE_DIR "; fi
 
 URL=""; TOKEN=""; WITH_CHANNEL=0; WITH_STATUSLINE=0
 while [ $# -gt 0 ]; do
@@ -19,7 +24,7 @@ while [ $# -gt 0 ]; do
     --token) TOKEN="${2:?}"; shift 2 ;;
     --with-channel) WITH_CHANNEL=1; shift ;;
     --with-statusline) WITH_STATUSLINE=1; shift ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -35,7 +40,10 @@ echo "  hooks  -> $CLAUDE_DIR/hooks/"
 
 # 2. skill
 mkdir -p "$CLAUDE_DIR/skills/agistry"
-install -m 0644 "$HERE/skills/agistry/SKILL.md"   "$CLAUDE_DIR/skills/agistry/SKILL.md"
+# SKILL.md names the default profile's script path; point it at this profile's copy.
+sed "s|~/\.claude/skills/agistry|$CLAUDE_DIR_SHOWN/skills/agistry|g" "$HERE/skills/agistry/SKILL.md" \
+  > "$CLAUDE_DIR/skills/agistry/SKILL.md"
+chmod 0644 "$CLAUDE_DIR/skills/agistry/SKILL.md"
 install -m 0755 "$HERE/skills/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
 echo "  skill  -> $CLAUDE_DIR/skills/agistry/"
 
@@ -102,9 +110,9 @@ if [ "$WITH_CHANNEL" = 1 ]; then
   fi
   echo
   echo "  To enable live-wake (channel), register it as an MCP server (the flag needs a NAME):"
-  echo "    claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
+  echo "    ${CLI_ENV}claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
   echo "  Then add this alias (the env var gates polling so it stays idle in normal sessions):"
-  echo "    alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
+  echo "    alias claude-party='${CLI_ENV}AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
 fi
 
 # 6. optional status line. Opt-in because settings.json holds a SINGLE .statusLine —

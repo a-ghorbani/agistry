@@ -57,6 +57,19 @@ Uninstall with `clients/claude-code/uninstall.sh`.
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
 - with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
 
+### Multiple Claude profiles
+
+If you run a second account via `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work1`), install
+into that profile too — the hooks resolve their own profile, and the skill paths are
+rewritten to point at it. Both profiles share `~/.config/agistry/client.env`.
+
+```bash
+CLAUDE_DIR=~/.claude-work1 clients/claude-code/install.sh --with-channel
+CLAUDE_CONFIG_DIR=~/.claude-work1 claude mcp add -s user agistry-channel -- node ~/.claude-work1/agistry-channel/agistry-channel.mjs
+```
+
+The tmux client's `install.sh` wires `~/.claude` and every `~/.claude-*/` profile.
+
 ## Enabling the channel
 
 The channel is **not** wired automatically. Register it once as an MCP server (the

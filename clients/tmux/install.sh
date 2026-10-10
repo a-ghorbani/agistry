@@ -2,7 +2,8 @@
 # Installs the tmux client: tmux-main, tmux-sidebar and agent-state into ~/bin
 # (symlinks, so edits here go live), and wires agent-state into every agent found
 # on this host:
-#   Claude Code  hooks in ~/.claude/settings.json      (merged, backup saved)
+#   Claude Code  hooks in ~/.claude/settings.json      (merged, backup saved; also
+#                every ~/.claude-*/ profile, e.g. one used via CLAUDE_CONFIG_DIR)
 #   Codex        hooks in ~/.codex/hooks.json          (merged, backup saved; trust once via /hooks)
 #   opencode     plugin  ~/.config/opencode/plugins/agent-state.js   (symlink)
 #   pi           extension ~/.pi/agent/extensions/agent-state.ts     (symlink)
@@ -19,7 +20,7 @@ UNINSTALL=0
 case "${1:-}" in
   --uninstall) UNINSTALL=1 ;;
   "") ;;
-  -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 1 ;;
 esac
 
@@ -80,7 +81,10 @@ if [ $UNINSTALL = 0 ]; then
   link "$HERE/tmux-sidebar" "$BIN/tmux-sidebar"
 fi
 
-[ -d "$HOME/.claude" ] && wire_hooks "$HOME/.claude/settings.json" claude "$CLAUDE_EVENTS"
+for dir in "$HOME/.claude" "$HOME"/.claude-*/; do
+  dir="${dir%/}"
+  [ -d "$dir" ] && wire_hooks "$dir/settings.json" claude "$CLAUDE_EVENTS"
+done
 if [ -d "$HOME/.codex" ]; then
   wire_hooks "$HOME/.codex/hooks.json" codex "$CODEX_EVENTS"
   [ $UNINSTALL = 0 ] && echo "  codex: new hooks are skipped until trusted — run /hooks in a codex session once"
