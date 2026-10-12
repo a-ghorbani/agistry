@@ -47,7 +47,17 @@ if [ "$UNINSTALL" = 0 ]; then
   echo "  providers -> $DEST"
 fi
 
-case "$(uname -s)" in
+# launchd and systemd manage the real account, whatever HOME says. A run with another
+# HOME (a test, a scratch install) must not load services pointing into that directory.
+OS="$(uname -s)"
+REAL_HOME="$(eval echo "~$(id -un)")"
+if [ "$(cd "$HOME" && pwd -P)" != "$(cd "$REAL_HOME" && pwd -P)" ]; then
+  [ -n "$WANT" ] && echo "  HOME is not $REAL_HOME: skipping services (files only)"
+  OS=skip
+fi
+
+case "$OS" in
+  skip) ;;
   Darwin)
     AGENTS="$HOME/Library/LaunchAgents"; LOGS="$HOME/Library/Logs/agistry"
     DOMAIN="gui/$(id -u)"

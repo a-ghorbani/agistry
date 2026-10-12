@@ -22,10 +22,13 @@ set -uo pipefail
 [ -f "$HOME/.config/agistry/client.env" ] && . "$HOME/.config/agistry/client.env"
 URL="${AGISTRY_URL:-http://127.0.0.1:7070}"
 TOK="${AGISTRY_TOKEN:-}"
-SID="${AGISTRY_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
+# Each agent exports its own session id to the commands it runs; an explicit
+# AGISTRY_SESSION_ID (plus AGISTRY_AGENT_KIND) wins.
+SID="${AGISTRY_SESSION_ID:-${CODEX_THREAD_ID:-${PI_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}}"
 AGENT_KIND="${AGISTRY_AGENT_KIND:-}"
 if [ -z "$AGENT_KIND" ]; then
   if [ -n "${CODEX_THREAD_ID:-}" ]; then AGENT_KIND=codex
+  elif [ -n "${PI_SESSION_ID:-}" ]; then AGENT_KIND=pi
   elif [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then AGENT_KIND=claude; fi
 fi
 STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
@@ -62,7 +65,7 @@ jobj() {
   fi
 }
 
-need_sid() { [ -n "$SID" ] || { echo '{"error":"Set AGISTRY_SESSION_ID, CODEX_THREAD_ID, or CLAUDE_CODE_SESSION_ID"}'; exit 1; }; }
+need_sid() { [ -n "$SID" ] || { echo '{"error":"no session id: set AGISTRY_SESSION_ID to the id given at session start"}'; exit 1; }; }
 
 # jobj quotes every value as a JSON string; ttl/max_hold must go over the wire as
 # numbers, so splice them in raw after validating they really are digits.
@@ -112,11 +115,11 @@ case "$cmd" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --kind)
-          [ $# -ge 2 ] || { echo "--kind requires codex, claude, or unknown" >&2; exit 1; }
-          case "$2" in codex|claude|unknown) params+=("agent_kind=$2") ;; *) echo "invalid agent kind: $2" >&2; exit 1 ;; esac
+          [ $# -ge 2 ] || { echo "--kind requires codex, claude, opencode, pi, or unknown" >&2; exit 1; }
+          case "$2" in codex|claude|opencode|pi|unknown) params+=("agent_kind=$2") ;; *) echo "invalid agent kind: $2" >&2; exit 1 ;; esac
           shift 2 ;;
         *)
-          case "$position" in 0) params+=("task=$1") ;; 1) params+=("role=$1") ;; *) echo "usage: who [task] [role] [--kind codex|claude|unknown]" >&2; exit 1 ;; esac
+          case "$position" in 0) params+=("task=$1") ;; 1) params+=("role=$1") ;; *) echo "usage: who [task] [role] [--kind codex|claude|opencode|pi|unknown]" >&2; exit 1 ;; esac
           position=$((position+1)); shift ;;
       esac
     done
