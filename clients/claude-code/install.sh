@@ -154,11 +154,13 @@ if [ "$WITH_CHANNEL" = 1 ]; then
   echo
 fi
 
-# 6. optional status line. Opt-in because settings.json holds a SINGLE .statusLine —
-#    unlike the hook arrays, wiring it clobbers any existing custom status line, so
-#    we only touch it when the user explicitly asks.
+# 6. optional status line. settings.json holds a SINGLE .statusLine, so rather than
+#    clobber one the user already has, we save it beside our script and ours runs it
+#    and appends to its output. One that already shows agistry state (an older copy
+#    of ours) is replaced instead, or the label would show twice.
 if [ "$WITH_STATUSLINE" = 1 ]; then
   SL="$CLAUDE_DIR/statusline/agistry-statusline.sh"
+  SL_PREV="$CLAUDE_DIR/statusline/agistry-statusline.prev.json"
   mkdir -p "$CLAUDE_DIR/statusline"
   install -m 0755 "$HERE/statusline/agistry-statusline.sh" "$SL"
   echo "  statusline -> $SL"
@@ -166,11 +168,22 @@ if [ "$WITH_STATUSLINE" = 1 ]; then
     [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
     PREV="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
     if [ -n "$PREV" ] && [ "$PREV" != "$SL" ]; then
-      echo "  NOTE: replacing an existing statusLine command ($PREV) — backup saved."
-    fi
+      PREV_BIN="${PREV%% *}"; PREV_BIN="${PREV_BIN/#\~/$HOME}"
+      if [ -f "$PREV_BIN" ] && grep -q 'agistry/state' "$PREV_BIN" 2>/dev/null; then
+        # saved only so uninstall can put it back; marked so ours does not run it
+        jq '.statusLine + {agistry_replaced: true}' "$SETTINGS" > "$SL_PREV"
+        echo "  replacing existing statusLine ($PREV) — it already shows agistry state"
+      else
+        jq '.statusLine' "$SETTINGS" > "$SL_PREV"
+        echo "  combining with existing statusLine ($PREV): shown first, agistry appended"
+      fi
+    elif [ -z "$PREV" ]; then
+      rm -f "$SL_PREV"
+    fi  # PREV == SL: a re-run; keep whatever was saved before
     cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
     tmp="$(mktemp)"
-    jq --arg sl "$SL" '.statusLine = {type:"command", command:$sl}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    # keep the other statusLine fields (e.g. padding)
+    jq --arg sl "$SL" '.statusLine = ((.statusLine // {}) + {type:"command", command:$sl})' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
     echo "  statusLine wired into $SETTINGS (backup saved)"
   else
     echo "  jq not found — add this to $SETTINGS by hand:"

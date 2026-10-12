@@ -39,6 +39,10 @@ its role with the skill, just as in Claude Code:
 ~/.agents/skills/agistry/agistry.sh send TASK-42:reviewer "ready for review"
 ```
 
+There is no Codex counterpart to the Claude Code client's `--with-statusline`:
+Codex's `[tui] status_line` only takes built-in items, not a command. To see each
+session's state at a glance, use the [tmux client](../tmux/README.md) sidebar.
+
 The CLI uses `AGISTRY_SESSION_ID`, then `CODEX_THREAD_ID`, then
 `CLAUDE_CODE_SESSION_ID`. When the Codex thread environment variable is absent,
 use the explicit session ID supplied by the SessionStart hook. Subagents must not

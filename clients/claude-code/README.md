@@ -39,9 +39,13 @@ This copies the hooks + skill into `~/.claude`, saves the URL and token to
   with Claude as the `agistry-channel` MCP server (if the `claude` CLI is on your
   `PATH`; otherwise the installer prints the command to run). Leave it out if you
   only want registration + the skill.
-- `--with-statusline` — show `role · task` in the Claude Code status bar. Opt-in
-  because `settings.json` holds a **single** `.statusLine`, so this replaces any
-  status line you already have (a backup is saved).
+- `--with-statusline` — show this session's registration in the Claude Code
+  status bar: `🏷  role · task` once joined, `📁 <dir> · (not joined)` before. If the
+  profile already has a status line, it is kept: its output is shown first and
+  agistry's is appended (`<yours> │ 🏷  role · task`). The exception is a status
+  line that already shows agistry state (an older copy of this script), which is
+  replaced so the label doesn't appear twice. Uninstall restores whatever was there.
+  Claude Code only — Codex's status line takes built-in items, not a command.
 
 Start a fresh `claude` session: it appears in the dashboard, and the row fills in
 once the agent joins with the `agistry` skill. For live-wake, finish with Step 3.
@@ -113,7 +117,8 @@ Per profile (`~/.claude` shown; `$CLAUDE_DIR` for others):
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`), and the
   `agistry-channel` user-scope MCP server (in `~/.claude.json`, or
   `$CLAUDE_DIR/.claude.json` for other profiles)
-- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
+- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`,
+  plus `agistry-statusline.prev.json` beside it when it wraps (or replaced) an existing status line
 
 Shared by all profiles: `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`).
 

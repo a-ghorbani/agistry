@@ -120,8 +120,12 @@ Then open a fresh session; it shows up in the dashboard.
   installs and registers the channel; add the `claude-party` shell function the
   installer prints and launch with it. See
   [Step 3](clients/claude-code/README.md#step-3--add-the-claude-party-launcher-if-you-used---with-channel).
+- **Status bar label for Claude:** add `--with-statusline` to show each session's
+  `role · task` in the Claude Code status bar. An existing status line is kept and
+  agistry's label is appended to it. Claude Code only: Codex's status line can't run
+  a custom command.
 - Optional: the [tmux client](clients/tmux/README.md) (session sidebar with agent
-  state) and [resource providers](#resources--leases).
+  state, for Claude Code and Codex) and [resource providers](#resources--leases).
 
 ## Security
 
