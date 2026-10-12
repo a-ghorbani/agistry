@@ -15,6 +15,7 @@ Re-announcing revives them, so unplugging and replugging a device heals on its o
 | `agistry-providers.sh` | Launcher — starts only the providers this host is configured for |
 | `agistry-provider@.service` | systemd user unit template — one supervised provider per instance |
 | `agistry-adb-provider.sh` | Android devices reachable via `adb devices -l` on this host |
+| `agistry-ios-provider.sh` | iPhones/iPads attached to this host (Xcode's `devicectl` on macOS, libimobiledevice on Linux) |
 | `install.sh` | Installs the above once per host into `~/.config/agistry/providers/` |
 
 ## Install (once per host)
@@ -38,10 +39,13 @@ Most hosts have no devices attached and should run no provider at all, so the de
 is **none**. Providers are named in `~/.config/agistry/client.env`:
 
 ```sh
-AGISTRY_PROVIDERS="adb"          # space/comma separated; unset or empty = none run
+AGISTRY_PROVIDERS="adb ios"      # space/comma separated; unset or empty = none run
 AGISTRY_PROVIDER_INTERVAL=300    # re-announce cadence, seconds
 AGISTRY_ADB_MAX_HOLD=21600       # 6h cap on a single hold of a phone
 AGISTRY_ADB=/path/to/adb         # optional; else ANDROID_HOME, the SDK, then PATH
+AGISTRY_IOS_MAX_HOLD=21600       # 6h cap on a single hold of an iPhone
+AGISTRY_IOS_TRANSPORTS=wired     # devicectl: which connections count; add localNetwork to opt in
+AGISTRY_IOS_TOOL=devicectl       # optional; force devicectl or libimobiledevice
 ```
 
 The launcher is idempotent — a pidfile guard means one daemon per provider per host,
@@ -85,6 +89,16 @@ Devices are keyed by adb serial (`adb:R5CT21…`) because that is what the tooli
 uses; the friendly model name rides along as metadata. Phones default to a 6h max hold
 (`AGISTRY_ADB_MAX_HOLD`) since a full e2e suite can run for hours — the cap is a backstop
 against an agent that is alive but has wandered off, not a normal expiry.
+
+iPhones and iPads are keyed by UDID (`ios:00008110-…`), the id `xcodebuild -destination
+id=<UDID>`, `devicectl --device` and `idevice* -u` all take; model, device name and iOS
+version ride along as metadata. On macOS the provider asks `xcrun devicectl list
+devices` (Xcode 15+) and announces **paired, physical devices on a cable** only: a phone
+paired to several Macs is visible to all of them over Wi-Fi, and two hosts must not
+announce the same device. Set `AGISTRY_IOS_TRANSPORTS="wired localNetwork"` on the one
+host that should own network-attached phones. On Linux it uses libimobiledevice
+(`idevice_id -l` + `ideviceinfo`), which sees USB devices only. Simulators are not
+announced — any number can run, so there is nothing to contend for.
 
 Copy this shape for anything else that is exclusive and host-attached: GPUs, serial
 rigs, licence dongles. Things with nobody to announce them — a staging URL, an API quota

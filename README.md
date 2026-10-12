@@ -219,6 +219,7 @@ the collision still happens and now nothing detects it.
   *host*, not to the registry, so only something running on that host can see it.
   `clients/providers/agistry-adb-provider.sh` is the reference: it runs `adb devices`
   and posts what it finds, on a loop, so devices appear and age out with reality.
+  `agistry-ios-provider.sh` does the same for iPhones/iPads (`ios:<UDID>`).
   Providers are **opt-in per host** — nothing starts unless `AGISTRY_PROVIDERS` names
   it, since most hosts have no devices attached. They are installed once per host
   (`~/.config/agistry/providers/`, by either client installer) and started by a Claude
