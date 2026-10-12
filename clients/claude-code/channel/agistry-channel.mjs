@@ -55,6 +55,17 @@ const server = new Server(
 
 await server.connect(new StdioServerTransport());
 
+// Exit with the session. Claude normally stops us, but if it dies without doing so
+// (a crash, a closed terminal, SIGKILL) the poll timer would keep us running as an
+// orphan, polling an inbox nobody reads and acking pushes into a dead pipe. Closed
+// stdio is the usual signal; a new parent (we were re-parented) catches the rest.
+const parentAtStart = process.ppid;
+const exitWithSession = () => process.exit(0);
+process.stdin.on('end', exitWithSession);
+process.stdin.on('close', exitWithSession);
+process.stdout.on('error', exitWithSession); // EPIPE: nobody reads our pushes
+server.onclose = exitWithSession;
+
 const authHeaders = token ? { 'X-Registry-Token': token } : {};
 
 function ps(field, pid) {
@@ -113,6 +124,7 @@ function currentSid() {
 }
 
 async function poll() {
+  if (process.ppid !== parentAtStart) exitWithSession();
   const sid = currentSid();
   if (!sid) return; // without a session id we cannot address an inbox
   let data;
