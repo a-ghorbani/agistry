@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
 import subprocess
@@ -38,39 +37,16 @@ def main():
         shutil.copy2(here / name, runtime / name)
         (runtime / name).chmod(0o755)
 
+    # Config, the agent-neutral skill (~/.agents/skills/agistry) and the device
+    # providers are shared with the opencode and pi clients.
+    shared = ["bash", str(here.parent / "shared/install.sh")]
+    if args.url:
+        shared += ["--url", args.url]
+    if args.token:
+        shared += ["--token", args.token]
+    subprocess.run(shared, check=True)
     skill_dir = home / ".agents/skills/agistry"
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    original = here.parent / "claude-code/skills/agistry"
-    skill = (original / "SKILL.md").read_text()
-    skill = skill.replace("This session's SessionStart hook already created an identity stub;",
-                          "This session's SessionStart hook records its identity for the local bridge;")
-    skill = skill.replace("~/.claude/skills/agistry", "~/.agents/skills/agistry")
-    skill = skill.replace("$CLAUDE_CODE_SESSION_ID", "$CODEX_THREAD_ID (or an explicit $AGISTRY_SESSION_ID)")
-    skill = skill.replace("A subagent shares its parent's session id", "Hooks can report the parent's session id for a subagent")
-    skill = skill.replace("or immediately if it is running with the live channel.",
-                          "or as a queued follow-up when the local Codex bridge is running. Queued messages wait for a busy turn to finish; idle sessions can start immediately. Delivery means accepted by Codex, not acted on.")
-    skill += "\nIf CODEX_THREAD_ID is unavailable, prefix commands with AGISTRY_SESSION_ID=<the SessionStart hook's session id>. Do not guess another session's identity.\n"
-    backup(skill_dir / "SKILL.md")
-    (skill_dir / "SKILL.md").write_text(skill)
-    backup(skill_dir / "agistry.sh")
-    shutil.copy2(original / "agistry.sh", skill_dir / "agistry.sh")
-    (skill_dir / "agistry.sh").chmod(0o755)
-
     config = home / ".config/agistry/client.env"
-    updates = {key: value for key, value in {"AGISTRY_URL": args.url, "AGISTRY_TOKEN": args.token}.items() if value is not None}
-    if updates:
-        config.parent.mkdir(parents=True, exist_ok=True)
-        text = config.read_text() if config.exists() else ""
-        backup(config)
-        for key, value in updates.items():
-            text = re.sub(r"^\s*(?:export\s+)?" + key + r"=.*(?:\n|$)", "", text, flags=re.MULTILINE)
-            text = text.rstrip("\n") + "\n" + key + "=" + shlex.quote(value) + "\n"
-        config.write_text(text.lstrip("\n"))
-        config.chmod(0o600)
-
-    # Resource providers are host-wide and shared with the Claude Code client; run
-    # after the config is written, since it decides which providers run.
-    subprocess.run(["bash", str(here.parent / "providers/install.sh")], check=True)
 
     hooks_path = codex_dir / "hooks.json"
     hooks = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
