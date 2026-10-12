@@ -1,71 +1,76 @@
-# Providers
+# agistry providers
 
-agistry never discovers resources itself. A phone is attached to a **host**, not to the
-registry, so only something running on that host can see it — and a central server has
-no way to enumerate USB devices on a machine across the room. Discovery is therefore the
-provider's job: whatever can see a resource announces it, on a loop, so it appears and
-ages out with reality.
+A **provider** announces the devices attached to its host (Android phones, iPhones)
+so agents can [lease](../../README.md#resources--leases) them. The server can't see a
+USB device on another machine, so a script on that machine posts what it finds to
+`/resources/register` on a loop. A device that stops being announced goes `gone`
+after the server's `REGISTRY_RESOURCE_TTL_SECONDS` (default 900); plugging it back in
+revives it.
 
-A provider is just a script that POSTs `/resources/register` periodically. If it stops,
-its resources go `gone` after `REGISTRY_RESOURCE_TTL_SECONDS` and nobody can claim them.
-Re-announcing revives them, so unplugging and replugging a device heals on its own.
+Providers belong to the **host**, not to an agent session, so they run as user
+services: a launchd LaunchAgent on macOS, a systemd user unit on Linux. They start
+when enabled, at every login or boot, and restart if they die. Each host has one copy
+of the scripts in `~/.config/agistry/providers/`.
 
-| Script | Announces |
-| --- | --- |
-| `agistry-providers.sh` | Launcher — starts only the providers this host is configured for |
-| `agistry-provider@.service` | systemd user unit template — one supervised provider per instance |
-| `agistry-adb-provider.sh` | Android devices reachable via `adb devices -l` on this host |
+## Enable on a host with devices
 
-## Nothing runs unless you configure it
+1. **Choose providers** in `~/.config/agistry/client.env`:
+   ```bash
+   AGISTRY_PROVIDERS="adb ios"      # any of: adb, ios
+   ```
+2. **Apply** — this installs the scripts and starts a service per provider listed,
+   stopping any that are no longer listed:
+   ```bash
+   clients/providers/install.sh
+   ```
+   The Claude Code and Codex installers run it too, so if `AGISTRY_PROVIDERS` was set
+   before you installed a client, the providers are already running. After changing
+   the list, run it again.
 
-Most hosts have no devices attached and should run no provider at all, so the default
-is **none**. Providers are named in `~/.config/agistry/client.env`:
+Check them with `~/.config/agistry/providers/agistry-providers.sh status` (or `list`).
+Logs: `~/Library/Logs/agistry/provider-<name>.log` on macOS,
+`journalctl --user -u agistry-provider@<name>` on Linux. On a Linux server you don't
+stay logged in to, run `loginctl enable-linger $USER` once so the services keep running
+after you log out; the installer reminds you.
 
-```sh
-AGISTRY_PROVIDERS="adb"          # space/comma separated; unset or empty = none run
-AGISTRY_PROVIDER_INTERVAL=300    # re-announce cadence, seconds
-AGISTRY_ADB_MAX_HOLD=21600       # 6h cap on a single hold of a phone
-AGISTRY_ADB=/path/to/adb         # optional; else ANDROID_HOME, the SDK, then PATH
-```
+**Uninstall:** `clients/providers/install.sh --uninstall` stops the services and
+removes the scripts. Uninstalling a Claude profile or the Codex client leaves them
+alone, since other agents on the host may use them.
 
-The launcher is idempotent — a pidfile guard means one daemon per provider per host,
-however many times it is called:
+## Settings
 
-```bash
-agistry-providers.sh list      # what exists, and what this host enables
-agistry-providers.sh start     # start the enabled ones (no-op if unset)
-agistry-providers.sh status
-agistry-providers.sh stop
-```
+All optional, in `~/.config/agistry/client.env`. Re-run `install.sh` after changing
+them, which restarts the services:
 
-Two ways to get them running, both opt-in:
+| Variable | Default | |
+| --- | --- | --- |
+| `AGISTRY_PROVIDER_INTERVAL` | `300` | Seconds between announcements. Keep it well under the server's resource TTL. |
+| `AGISTRY_ADB_MAX_HOLD`, `AGISTRY_IOS_MAX_HOLD` | `21600` (6h) | Longest single hold on a phone: long enough for a full e2e suite, short enough to catch an agent that wandered off. |
+| `AGISTRY_ADB` | found | Path to `adb`, if it isn't in `ANDROID_HOME` or the default SDK. Services don't get your shell's `PATH`, so set this or `ANDROID_HOME` here. |
+| `AGISTRY_IOS_TRANSPORTS` | `wired` | Add `localNetwork` to also announce iPhones connected over Wi-Fi (see below). |
+| `AGISTRY_IOS_TOOL` | found | Force `devicectl` or `libimobiledevice`. |
 
-- **User service (preferred on a host that permanently owns devices).** Copy
-  `agistry-provider@.service` to `~/.config/systemd/user/` and
-  `systemctl --user enable --now agistry-provider@adb` — the instance name is the
-  provider. It runs the provider in the foreground so **systemd** is what notices it
-  died and restarts it; it starts at boot and does not depend on anyone opening a
-  Claude session.
-- **Session autostart.** Set `AGISTRY_PROVIDERS_AUTOSTART=1` as well, and the
-  SessionStart hook calls the launcher. Both gates must be set, so a host that has
-  not asked for providers never spawns one.
+## Devices
 
-Use **one or the other**. systemd supervises its copy directly and knows nothing about
-the launcher's pidfile, so enabling both announces the same devices twice — harmless,
-since registration is an idempotent upsert, but pointless.
+| Provider | Id | Found with |
+| --- | --- | --- |
+| `adb` | `adb:<serial>` | `adb devices -l`; devices that are offline or unauthorized are skipped |
+| `ios` | `ios:<UDID>` | macOS: `xcrun devicectl list devices` (Xcode 15+). Linux: libimobiledevice, USB only |
 
-You can also run a single provider directly, without the launcher:
+The id is what the device tooling already takes: `adb -s <serial>`,
+`xcodebuild -destination id=<UDID>`, `devicectl --device`, `idevice* -u`. The model
+(and for iOS the device name and OS version) is included as metadata.
 
-```bash
-./agistry-adb-provider.sh            # one pass
-./agistry-adb-provider.sh --loop 300 # keep refreshing
-```
+**iPhones over Wi-Fi.** A phone paired to several Macs is visible to all of them over
+the network, and two hosts must not announce the same device. So by default only
+cabled phones are announced. Set `AGISTRY_IOS_TRANSPORTS="wired localNetwork"` on the
+one Mac that should own the network-attached ones. Simulators are never announced:
+you can run as many as you like, so there is nothing to lease.
 
-Devices are keyed by adb serial (`adb:R5CT21…`) because that is what the tooling already
-uses; the friendly model name rides along as metadata. Phones default to a 6h max hold
-(`AGISTRY_ADB_MAX_HOLD`) since a full e2e suite can run for hours — the cap is a backstop
-against an agent that is alive but has wandered off, not a normal expiry.
+## Adding a provider
 
-Copy this shape for anything else that is exclusive and host-attached: GPUs, serial
-rigs, licence dongles. Things with nobody to announce them — a staging URL, an API quota
-— belong in the server's `REGISTRY_RESOURCES_FILE` seed instead.
+Copy `agistry-adb-provider.sh` for anything exclusive and attached to a host: a GPU,
+a serial rig, a licence dongle. Name it `agistry-<name>-provider.sh` with a `--loop`
+mode, and `AGISTRY_PROVIDERS` can list it as `<name>`. Things nothing on a host can
+discover, like a staging URL or an API quota, go in the server's
+`REGISTRY_RESOURCES_FILE` instead.

@@ -10,9 +10,21 @@
 # status bar always mirrors what the agent registered:
 #   joined      -> "🏷  role · task"
 #   not joined  -> "📁 <dir> · (not joined)"
+#
+# If the profile already had a status line, the installer saves it next to this
+# script as agistry-statusline.prev.json; it is run with the same input and its
+# output is shown first, with ours appended: "<previous> │ 🏷  role · task".
 set -uo pipefail
 
 input="$(cat)"
+
+prev=""
+prev_file="$(dirname "${BASH_SOURCE[0]}")/agistry-statusline.prev.json"
+if [ -f "$prev_file" ] && command -v jq >/dev/null 2>&1; then
+  # agistry_replaced: an older copy of this script, kept only so uninstall restores it
+  prev_cmd="$(jq -r 'if .agistry_replaced then empty else .command // empty end' "$prev_file" 2>/dev/null)"
+  [ -n "$prev_cmd" ] && prev="$(printf '%s' "$input" | bash -c "$prev_cmd" 2>/dev/null)"
+fi
 sid=""
 cwd=""
 if command -v jq >/dev/null 2>&1; then
@@ -30,12 +42,19 @@ if [ -n "$sid" ] && [ -f "$state_file" ] && command -v jq >/dev/null 2>&1; then
   task="$(jq -r '.task // empty' "$state_file" 2>/dev/null)"
 fi
 
+ours=""
 if [ -n "$role" ] && [ -n "$task" ]; then
-  printf '🏷  %s · %s' "$role" "$task"
+  ours="$(printf '🏷  %s · %s' "$role" "$task")"
 elif [ -n "$role" ]; then
-  printf '🏷  %s' "$role"
+  ours="🏷  $role"
 elif [ -n "$task" ]; then
-  printf '🏷  %s' "$task"
+  ours="🏷  $task"
 elif [ -n "$cwd" ]; then
-  printf '📁 %s · (not joined)' "$(basename "$cwd")"
+  ours="📁 $(basename "$cwd") · (not joined)"
+fi
+
+if [ -n "$prev" ] && [ -n "$ours" ]; then
+  printf '%s │ %s' "$prev" "$ours"
+else
+  printf '%s' "$prev$ours"
 fi

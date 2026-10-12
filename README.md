@@ -17,17 +17,13 @@ state, an embedded web dashboard.
 
 ![agistry dashboard — force-directed graph of agents grouped by host, with a selected agent's task, session, and message history in the side panel](docs/dashboard.png)
 
-The dashboard groups live agents by host, draws message handoffs as links, and
-opens a side panel with each agent's task, session, cwd, and recent messages.
-Resources show as squares — hollow when free, filled when held, amber when the hold
-ends within 10 minutes — tied to their holder by a solid edge. Click one for its
-holder, time left, and the note the last holder left on it; the table view lists
-them all above the agents. Clicking an agent shows its messages as a chat: both
-directions of a conversation in one thread, the agent's own messages on the right,
-a delivered / waiting / never claimed mark on each, and a picker when it has talked
-to more than one agent. Toggle **Graph / Table**, filter `gone`/`idle`, and
-auto-refresh. Agent circles contain the Codex or Claude Code SVG logo in a darker state color; unknown clients keep a plain circle. The table and detail panel
-show the full agent name, and the agent-kind filter applies to both views.
+The dashboard groups live agents by host (Claude Code and Codex agents show their logo)
+and draws message handoffs as links. Click an agent for its task, session, cwd and
+its messages as a chat thread, each marked delivered, waiting or never claimed.
+Resources show as squares: hollow when free, filled when held, amber when the hold
+ends within 10 minutes. Click one for its holder, time left, and the note the last
+holder left. Switch between **Graph** and **Table**, filter by state or agent kind,
+and auto-refresh.
 
 ## Why
 
@@ -99,6 +95,23 @@ sudo systemctl enable --now agistry
 curl -s http://<host>:7070/healthz           # -> ok
 ```
 
+## Connect your agents
+
+With the server running, install a client on **each machine that runs agents**, from
+a clone of this repo. It registers every session on its own and gives the agent the
+`agistry` skill (`join`, `who`, `send`, `inbox`, leases). Then open a new session; it
+appears in the dashboard.
+
+| For | Install | Guide |
+| --- | --- | --- |
+| Claude Code | `clients/claude-code/install.sh --url http://HOST:7070 --token TOKEN --with-channel` | [clients/claude-code](clients/claude-code/README.md): more profiles, the `claude-party` launcher, status line |
+| Codex | `bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN`, then trust the hooks with `/hooks` in Codex | [clients/codex](clients/codex/README.md) |
+| Devices (phones) | Set `AGISTRY_PROVIDERS` in `client.env`, then `clients/providers/install.sh` (either client installer also runs it) | [clients/providers](clients/providers/README.md) |
+| tmux sidebar | `clients/tmux/install.sh` (optional) | [clients/tmux](clients/tmux/README.md) |
+
+All clients on a machine share `~/.config/agistry/client.env`, so give the URL and
+token once.
+
 ## Security
 
 - **Always set `REGISTRY_TOKEN`** for any networked deployment. Clients send it as
@@ -108,6 +121,84 @@ curl -s http://<host>:7070/healthz           # -> ok
   LAN — do not expose it to the internet.
 - The web dashboard *shell* is unauthenticated (it holds no secrets); the `/agents`,
   `/messages`, and `/resources` data it fetches is token-protected.
+
+## Resources & leases
+
+A **resource** is a thing agents contend for: an Android phone on a USB hub, a GPU, a
+staging environment, an API quota. Lanes claim one so they stop interrupting each other
+— reinstalling over a running e2e suite, or taking screenshots of someone else's build.
+
+**agistry does not enforce anything.** It cannot stop you running `adb install`. A lease
+is *advisory*: it prevents collisions, it does not prove the resource is in the state
+you expect. Keep whatever verification you already do — the lease and the check answer
+different questions, and a lease that quietly replaces a check makes things worse, since
+the collision still happens and now nothing detects it.
+
+- **A lease, not a lock.** The dominant failure is not contention, it is an agent that
+  dies mid-hold and deadlocks the fleet. A lease ends when its deadline passes **or**
+  when the holder's session goes `gone` — and the second is why this lives in the
+  registry rather than a lock file: only agistry knows the holder died. *Alive holder →
+  held; dead holder → free.* The clients heartbeat independently of agent activity
+  (the Claude Code heartbeat daemon, the Codex bridge), so a lane blocked in a
+  three-hour test still holds its phone.
+- **A cap, so a live-but-idle holder cannot sit on a device forever.** Per resource via
+  `max_hold_seconds` (set it to ~6h for phones running full e2e suites), falling back to
+  `REGISTRY_LEASE_MAX_HOLD_SECONDS`. Renewal can never outrun it; hitting the cap is the
+  signal to re-claim deliberately.
+- **No `steal`.** Reclaiming a dead holder needs no ceremony and happens automatically
+  inside `claim`, which reports what it displaced. Taking a device from a *live* holder
+  is a conversation, not an API call — hence the 409 carrying their `task:role`, which
+  you hand straight to `/send`.
+- **The note is worth more than the lock.** Every lease carries an opaque note agistry
+  stores and never interprets — an installed bundle hash, a job id, a reason. It
+  survives release, so a lane arriving at a *free* device still learns what is on it,
+  and a reviewer reading back later has a durable record of what was there at capture
+  time.
+- **Discovery belongs to the provider, not the server.** A phone is attached to a
+  *host*, so only something running there can see it. A provider on that host
+  announces its devices on a loop (`adb:<serial>`, `ios:<UDID>`), so they appear and
+  age out with reality. Providers are opt-in per host and run as user
+  services (launchd, systemd); see [clients/providers](clients/providers/README.md). Things nothing can discover (a
+  staging URL, a quota) go in `REGISTRY_RESOURCES_FILE` instead.
+
+```bash
+agistry.sh resources free                      # what is available
+agistry.sh claim adb:R5CT21 21600 "app-debug sha256:deadbeef"
+agistry.sh renew adb:R5CT21                    # extend (capped)
+agistry.sh release adb:R5CT21 "left sha256:deadbeef resident"
+
+# occupied? the 409 names the holder — ask them, do not force
+agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
+```
+
+## Delivery model
+
+- The **mailbox is the source of truth** — durable, survives the target being offline.
+- **Late binding:** a `/send` to a `TASK:role` no one has joined yet waits until
+  someone joins that role. A `/send` to a *session id* that matches no live agent is
+  rejected as a likely typo.
+- **Atomic drain:** `/inbox` selects and marks-delivered in a single statement.
+- Three ways a message reaches an agent:
+  - **Claude Code live channel** — polls `/inbox?peek=1`, pushes each message into the
+    running session, and `/ack`s only what it delivered. See
+    [the channel](clients/claude-code/channel/README.md).
+  - **Codex bridge** — peeks the same way and hands each message to `codex queue` as a
+    follow-up, `/ack`ing once Codex accepts it. See [the Codex client](clients/codex/README.md).
+  - **Manual poll** (`agistry.sh inbox`) — the agent drains its mailbox on demand;
+    consume-on-read.
+
+  The first two are **at least once**: a failed push is retried, and each message
+  carries a stable `msg_id` so a repeat can be recognised.
+- **History is kept for a month:** delivered and dead-lettered messages both stay
+  readable for `REGISTRY_MESSAGE_RETENTION_SECONDS` (30 days), so the dashboard's chat
+  panel shows both halves of an exchange. The bodies are short text; the dashboard pages
+  a conversation rather than loading it whole.
+- **Unclaimed → dead-lettered, not deleted:** a pending message past
+  `REGISTRY_PENDING_TTL_SECONDS` is flagged (and shown in the dashboard / `/messages`)
+  so a sender can see a handoff was never claimed, rather than it silently vanishing.
+- **Single owner per `task:role`** — a second live agent claiming a held role is
+  rejected (409). The same mechanism (a partial unique index) gives one holder per
+  resource.
 
 ## API
 
@@ -156,90 +247,11 @@ curl -s $TOK $BASE/send     -d '{"to":"TASK-42:implementer","from":"reviewer","m
 curl -s $TOK "$BASE/inbox?session_id=def"
 ```
 
-## Resources & leases
-
-A **resource** is a thing agents contend for: an Android phone on a USB hub, a GPU, a
-staging environment, an API quota. Lanes claim one so they stop interrupting each other
-— reinstalling over a running e2e suite, or taking screenshots of someone else's build.
-
-**agistry does not enforce anything.** It cannot stop you running `adb install`. A lease
-is *advisory*: it prevents collisions, it does not prove the resource is in the state
-you expect. Keep whatever verification you already do — the lease and the check answer
-different questions, and a lease that quietly replaces a check makes things worse, since
-the collision still happens and now nothing detects it.
-
-- **A lease, not a lock.** The dominant failure is not contention, it is an agent that
-  dies mid-hold and deadlocks the fleet. A lease ends when its deadline passes **or**
-  when the holder's session goes `gone` — and the second is why this lives in the
-  registry rather than a lock file: only agistry knows the holder died. *Alive holder →
-  held; dead holder → free.* The Claude Code heartbeat daemon ticks independently of
-  agent activity, so a lane blocked in a three-hour test still holds its phone.
-- **A cap, so a live-but-idle holder cannot sit on a device forever.** Per resource via
-  `max_hold_seconds` (set it to ~6h for phones running full e2e suites), falling back to
-  `REGISTRY_LEASE_MAX_HOLD_SECONDS`. Renewal can never outrun it; hitting the cap is the
-  signal to re-claim deliberately.
-- **No `steal`.** Reclaiming a dead holder needs no ceremony and happens automatically
-  inside `claim`, which reports what it displaced. Taking a device from a *live* holder
-  is a conversation, not an API call — hence the 409 carrying their `task:role`, which
-  you hand straight to `/send`.
-- **The note is worth more than the lock.** Every lease carries an opaque note agistry
-  stores and never interprets — an installed bundle hash, a job id, a reason. It
-  survives release, so a lane arriving at a *free* device still learns what is on it,
-  and a reviewer reading back later has a durable record of what was there at capture
-  time.
-- **Discovery belongs to the provider, not the server.** A phone is attached to a
-  *host*, not to the registry, so only something running on that host can see it.
-  `clients/providers/agistry-adb-provider.sh` is the reference: it runs `adb devices`
-  and posts what it finds, on a loop, so devices appear and age out with reality.
-  Providers are **opt-in per host** — nothing starts unless `AGISTRY_PROVIDERS` names
-  it, since most hosts have no devices attached. Static things with nobody to announce
-  them (a staging URL, a quota) go in `REGISTRY_RESOURCES_FILE` instead.
-
-```bash
-agistry.sh resources free                      # what is available
-agistry.sh claim adb:R5CT21 21600 "app-debug sha256:deadbeef"
-agistry.sh renew adb:R5CT21                    # extend (capped)
-agistry.sh release adb:R5CT21 "left sha256:deadbeef resident"
-
-# occupied? the 409 names the holder — ask them, do not force
-agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
-```
-
-## Delivery model
-
-Codex sessions can use the [Codex client](clients/codex/README.md): lifecycle
-hooks register presence and a local bridge forwards mailbox messages through
-`codex queue`. It supports the local shared Codex daemon; busy turns receive
-follow-ups after finishing, and idle threads can dispatch them immediately.
-The existing Claude Code live channel remains available for Claude sessions.
-
-- The **mailbox is the source of truth** — durable, survives the target being offline.
-- **Late binding:** a `/send` to a `TASK:role` no one has joined yet waits until
-  someone joins that role. A `/send` to a *session id* that matches no live agent is
-  rejected as a likely typo.
-- **Atomic drain:** `/inbox` selects and marks-delivered in a single statement.
-- Two ways a message reaches an agent:
-  - **Live channel** (peek + `/ack`) — the bundled Claude Code channel polls
-    `/inbox?peek=1`, pushes each message into the running session, and `/ack`s only
-    what it delivered: **at-least-once into context** (a dropped push is retried).
-  - **Manual poll** (`/inbox`) — the agent drains its mailbox on demand; consume-on-read,
-    best-effort.
-- **History is kept for a month:** delivered and dead-lettered messages both stay
-  readable for `REGISTRY_MESSAGE_RETENTION_SECONDS` (30 days), so the dashboard's chat
-  panel shows both halves of an exchange. The bodies are short text; the dashboard pages
-  a conversation rather than loading it whole.
-- **Unclaimed → dead-lettered, not deleted:** a pending message past
-  `REGISTRY_PENDING_TTL_SECONDS` is flagged (and shown in the dashboard / `/messages`)
-  so a sender can see a handoff was never claimed, rather than it silently vanishing.
-- **Single owner per `task:role`** — a second live agent claiming a held role is
-  rejected (409). The same mechanism (a partial unique index) gives one holder per
-  resource.
-
 ## Schema & upgrades
 
 The schema is greenfield — `CREATE TABLE IF NOT EXISTS`, **no in-repo migrations**.
 State is disposable: agents reconcile their identity on every heartbeat, liveness
-self-heals via TTL, delivered messages GC. To ship a schema change: **stop the
+self-heals via TTL, and finished messages expire after the retention period. To ship a schema change: **stop the
 service → delete the `registry.db*` files → restart**; clients re-register within one
 heartbeat. Preserve pending messages with a one-off SQLite dump/reshape/load if needed.
 

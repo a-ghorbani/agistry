@@ -16,6 +16,13 @@ CFG="$HOME/.config/agistry/client.env"
 # CLI needs to act on a non-default profile.
 CLAUDE_DIR_SHOWN="${CLAUDE_DIR/#"$HOME"/"~"}"
 if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then CLI_ENV=""; else CLI_ENV="CLAUDE_CONFIG_DIR=$CLAUDE_DIR "; fi
+# Run the claude CLI against the target profile. The default profile keeps its user
+# config in ~/.claude.json, so it must run with CLAUDE_CONFIG_DIR unset, not pointed
+# at ~/.claude.
+claude_cli() {
+  if [ -n "$CLI_ENV" ]; then CLAUDE_CONFIG_DIR="$CLAUDE_DIR" claude "$@"
+  else env -u CLAUDE_CONFIG_DIR claude "$@"; fi
+}
 
 URL=""; TOKEN=""; WITH_CHANNEL=0; WITH_STATUSLINE=0
 while [ $# -gt 0 ]; do
@@ -47,30 +54,35 @@ chmod 0644 "$CLAUDE_DIR/skills/agistry/SKILL.md"
 install -m 0755 "$HERE/skills/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
 echo "  skill  -> $CLAUDE_DIR/skills/agistry/"
 
-# 2b. resource providers (inert unless AGISTRY_PROVIDERS names one — see below)
-if [ -d "$HERE/../providers" ]; then
-  mkdir -p "$CLAUDE_DIR/providers"
-  for f in "$HERE"/../providers/*.sh; do
-    [ -e "$f" ] || continue
-    install -m 0755 "$f" "$CLAUDE_DIR/providers/$(basename "$f")"
-  done
-  for f in "$HERE"/../providers/*.service; do
-    [ -e "$f" ] || continue
-    install -m 0644 "$f" "$CLAUDE_DIR/providers/$(basename "$f")"
-  done
-  echo "  providers -> $CLAUDE_DIR/providers/ (none run until AGISTRY_PROVIDERS is set)"
-fi
-
-# 3. config (only written if --url/--token given, or if missing)
+# 3. config. Shared by every profile, so only the keys given are replaced; the rest
+#    (the other key, AGISTRY_PROVIDERS, ...) are kept.
 if [ -n "$URL" ] || [ -n "$TOKEN" ]; then
   mkdir -p "$(dirname "$CFG")"
   ( umask 077
-    { [ -n "$URL" ]   && echo "AGISTRY_URL=$URL";   true
-      [ -n "$TOKEN" ] && echo "AGISTRY_TOKEN=$TOKEN"; true; } > "$CFG" )
+    tmp="$(mktemp)"
+    [ -f "$CFG" ] && cat "$CFG" > "$tmp"
+    if [ -n "$URL" ]; then
+      grep -v '^AGISTRY_URL=' "$tmp" > "$tmp.new" || true; mv "$tmp.new" "$tmp"
+      echo "AGISTRY_URL=$URL" >> "$tmp"
+    fi
+    if [ -n "$TOKEN" ]; then
+      grep -v '^AGISTRY_TOKEN=' "$tmp" > "$tmp.new" || true; mv "$tmp.new" "$tmp"
+      echo "AGISTRY_TOKEN=$TOKEN" >> "$tmp"
+    fi
+    mv "$tmp" "$CFG" )
   chmod 600 "$CFG"
   echo "  config -> $CFG"
 elif [ ! -f "$CFG" ]; then
   echo "  config -> NONE YET. Create $CFG with AGISTRY_URL + AGISTRY_TOKEN (or re-run with --url/--token)."
+fi
+
+# 3b. resource providers: host-wide, not per profile, so they go to one shared place,
+#     run as user services for each name in AGISTRY_PROVIDERS (after the config step,
+#     which may have just written it). Drop the per-profile copy older installs left.
+"$HERE/../providers/install.sh"
+if [ -d "$CLAUDE_DIR/providers" ]; then
+  rm -rf "$CLAUDE_DIR/providers"
+  echo "  removed old per-profile copy $CLAUDE_DIR/providers"
 fi
 
 # 4. wire hooks into settings.json (idempotent; needs jq)
@@ -95,8 +107,10 @@ else
   echo "  jq not found — add the SessionStart/SessionEnd hooks to $SETTINGS by hand (see README)."
 fi
 
-# 5. optional channel (live-wake). Deliberately NOT added to mcpServers — it must
-#    only run via the explicit launch flag, or it would drain inboxes silently.
+# 5. optional channel (live-wake). Registered as a user-scope MCP server so the
+#    --dangerously-load-development-channels flag can find it by name. That makes
+#    Claude spawn it in every session, which is safe: it stays idle unless
+#    AGISTRY_CHANNEL_ACTIVE=1 is set, which only the claude-party launcher does.
 if [ "$WITH_CHANNEL" = 1 ]; then
   CH="$CLAUDE_DIR/agistry-channel"
   mkdir -p "$CH"
@@ -108,18 +122,40 @@ if [ "$WITH_CHANNEL" = 1 ]; then
   else
     echo "  channel -> $CH (npm not found — install Node deps there manually)"
   fi
+  MCP_ADD="${CLI_ENV}claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
+  if command -v claude >/dev/null 2>&1; then
+    # Re-register so a re-run (or a stale path) ends up pointing at this profile's copy.
+    claude_cli mcp remove -s user agistry-channel >/dev/null 2>&1 || true
+    if claude_cli mcp add -s user agistry-channel -- node "$CH/agistry-channel.mjs" >/dev/null 2>&1; then
+      echo "  channel registered as MCP server 'agistry-channel' (user scope)"
+    else
+      echo "  channel MCP registration FAILED — run it yourself:"
+      echo "    $MCP_ADD"
+    fi
+  else
+    echo "  claude CLI not found — register the channel yourself:"
+    echo "    $MCP_ADD"
+  fi
+  PARTY="claude-party"
+  [ -n "$CLI_ENV" ] && PARTY="claude-party-$(basename "$CLAUDE_DIR" | sed 's/^\.claude-//; s/^\.//')"
   echo
-  echo "  To enable live-wake (channel), register it as an MCP server (the flag needs a NAME):"
-  echo "    ${CLI_ENV}claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
-  echo "  Then add this alias (the env var gates polling so it stays idle in normal sessions):"
-  echo "    alias claude-party='${CLI_ENV}AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
+  echo "  Last step for live-wake: add this launcher to your ~/.zshrc or ~/.bashrc, then"
+  echo "  start sessions with '$PARTY' (accepts the usual claude args, e.g. --resume):"
+  echo
+  echo "    $PARTY() {"
+  echo "      ${CLI_ENV}AGISTRY_CHANNEL_ACTIVE=1 claude \"\$@\" \\"
+  echo "        --dangerously-load-development-channels server:agistry-channel"
+  echo "    }"
+  echo
 fi
 
-# 6. optional status line. Opt-in because settings.json holds a SINGLE .statusLine —
-#    unlike the hook arrays, wiring it clobbers any existing custom status line, so
-#    we only touch it when the user explicitly asks.
+# 6. optional status line. settings.json holds a SINGLE .statusLine, so rather than
+#    clobber one the user already has, we save it beside our script and ours runs it
+#    and appends to its output. One that already shows agistry state (an older copy
+#    of ours) is replaced instead, or the label would show twice.
 if [ "$WITH_STATUSLINE" = 1 ]; then
   SL="$CLAUDE_DIR/statusline/agistry-statusline.sh"
+  SL_PREV="$CLAUDE_DIR/statusline/agistry-statusline.prev.json"
   mkdir -p "$CLAUDE_DIR/statusline"
   install -m 0755 "$HERE/statusline/agistry-statusline.sh" "$SL"
   echo "  statusline -> $SL"
@@ -127,11 +163,22 @@ if [ "$WITH_STATUSLINE" = 1 ]; then
     [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
     PREV="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
     if [ -n "$PREV" ] && [ "$PREV" != "$SL" ]; then
-      echo "  NOTE: replacing an existing statusLine command ($PREV) — backup saved."
-    fi
+      PREV_BIN="${PREV%% *}"; PREV_BIN="${PREV_BIN/#\~/$HOME}"
+      if [ -f "$PREV_BIN" ] && grep -q 'agistry/state' "$PREV_BIN" 2>/dev/null; then
+        # saved only so uninstall can put it back; marked so ours does not run it
+        jq '.statusLine + {agistry_replaced: true}' "$SETTINGS" > "$SL_PREV"
+        echo "  replacing existing statusLine ($PREV) — it already shows agistry state"
+      else
+        jq '.statusLine' "$SETTINGS" > "$SL_PREV"
+        echo "  combining with existing statusLine ($PREV): shown first, agistry appended"
+      fi
+    elif [ -z "$PREV" ]; then
+      rm -f "$SL_PREV"
+    fi  # PREV == SL: a re-run; keep whatever was saved before
     cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
     tmp="$(mktemp)"
-    jq --arg sl "$SL" '.statusLine = {type:"command", command:$sl}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    # keep the other statusLine fields (e.g. padding)
+    jq --arg sl "$SL" '.statusLine = ((.statusLine // {}) + {type:"command", command:$sl})' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
     echo "  statusLine wired into $SETTINGS (backup saved)"
   else
     echo "  jq not found — add this to $SETTINGS by hand:"

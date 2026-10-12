@@ -1,37 +1,41 @@
-# Codex client
+# agistry × Codex
 
-Registers independent top-level Codex sessions, reconciles their task/role and
-presence, and forwards Agistry mail through `codex queue`. The Go server and the
-existing resource providers need no changes.
+Registers each top-level Codex session with agistry, keeps its task, role and
+presence up to date, and delivers agistry mail to it as a queued follow-up
+(`codex queue`).
 
-Requires Bash, Python 3.9+, `curl`, `jq`, and a Codex CLI exposing `queue` and
-`app-server proxy` (tested with 0.160.1). Supports Linux/macOS and sessions hosted
-by the **local shared Codex daemon**. Sessions launched with `--no-daemon`, remote
-App Server endpoints, IDE-private servers, and cloud sessions are outside this
-adapter's delivery path. The bridge does not create or resume threads itself.
+**Requires** Bash, Python 3.9+, `curl`, `jq`, and a Codex CLI with `queue` and
+`app-server proxy` (tested with 0.160.1), on Linux or macOS. Only sessions hosted by
+the **local shared Codex daemon** are supported: not `--no-daemon`, remote App Server
+endpoints, IDE-private servers or cloud sessions.
 
 ## Install
 
 ```bash
-bash clients/codex/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN
+bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN
 ```
 
-Omit URL/token if `~/.config/agistry/client.env` already contains them. Supplied
-options update only those keys, preserving providers and other settings. The
-installer backs up existing configuration, preserves unrelated hook handlers,
-and is safe to repeat. It installs:
+1. Leave off `--url`/`--token` if `~/.config/agistry/client.env` already has them
+   (e.g. from the Claude Code client); given one, only that key changes.
+2. In Codex, run **`/hooks`** and trust the new hooks. Codex skips new or changed
+   hooks until you do ([hook docs](https://learn.chatgpt.com/docs/hooks)).
+3. Start or resume a session. It appears in the dashboard.
 
-- `~/.codex/agistry/`: hook entry point and Python bridge (honors `CODEX_HOME`).
-- `~/.codex/hooks.json`: `SessionStart` / `SessionEnd` handlers.
-- `~/.agents/skills/agistry/`: the existing skill adapted for Codex and the shared CLI.
+The installer is safe to re-run, backs up what it changes, and keeps other hooks. It
+writes:
 
-In Codex, open **`/hooks`** and review/trust the installed hooks; Codex skips new
-or changed hooks until trusted. Start/resume a session after the hooks are loaded.
-See [official hook documentation](https://learn.chatgpt.com/docs/hooks).
+- `~/.codex/agistry/`: the hook entry point and the bridge (honors `CODEX_HOME`)
+- `~/.codex/hooks.json`: `SessionStart` and `SessionEnd` handlers
+- `~/.agents/skills/agistry/`: the `agistry` skill and its CLI, adapted for Codex
+- `~/.config/agistry/providers/`: the host's [resource providers](../providers/README.md),
+  shared with the Claude Code client
 
-The SessionStart hook records the session and starts one bridge per local Codex
-home, using a process lock to prevent concurrent consumers. The agent declares
-its role with the skill, just as in Claude Code:
+**Uninstall:** there is no script yet. Remove the `agistry-codex.sh` handlers from
+`~/.codex/hooks.json`, then delete `~/.codex/agistry/` and `~/.agents/skills/agistry/`.
+
+## Use
+
+The agent joins and talks to others with the skill, as in Claude Code:
 
 ```bash
 ~/.agents/skills/agistry/agistry.sh join implementer TASK-42
@@ -39,62 +43,64 @@ its role with the skill, just as in Claude Code:
 ~/.agents/skills/agistry/agistry.sh send TASK-42:reviewer "ready for review"
 ```
 
-The CLI uses `AGISTRY_SESSION_ID`, then `CODEX_THREAD_ID`, then
-`CLAUDE_CODE_SESSION_ID`. When the Codex thread environment variable is absent,
-use the explicit session ID supplied by the SessionStart hook. Subagents must not
-join or consume a parent's mailbox.
+The CLI takes the session id from `AGISTRY_SESSION_ID`, then `CODEX_THREAD_ID`. If
+neither is set, prefix commands with `AGISTRY_SESSION_ID=<id>` using the id the
+SessionStart hook gave the agent. Subagents don't join and must not read their
+parent's mailbox.
 
-## Delivery and recovery
+There is no status line label as in Claude Code (Codex's status line takes built-in
+items only); the [tmux sidebar](../tmux/README.md) shows each session's state instead.
 
-The bridge performs a WebSocket handshake over `codex app-server proxy` (a raw
-socket tunnel, rather than JSONL stdio) and reads the daemon's loaded
-thread IDs. Only locally registered, loaded, non-ended threads are heartbeaten
-or polled. **A living daemon alone does not prove a session is alive.** A thread
-that unloads or ends is deregistered; when the daemon disconnects, the bridge
-stops polling/heartbeating and retries with backoff. Agistry's TTL covers a
-bridge/host crash. Closing a terminal does not necessarily end its daemon-hosted
-thread immediately; Codex's loaded-thread lifetime is authoritative.
+## How delivery works
 
-For each eligible session:
+The SessionStart hook records the session and starts a **bridge**, one per Codex home
+(a lock prevents duplicates). The bridge connects to the Codex daemon through
+`codex app-server proxy` and reads which threads are loaded. Only threads that are
+registered here, loaded, and not ended are heartbeated and polled. A running daemon
+doesn't prove a session is alive: a thread that unloads or ends is deregistered, and
+if the daemon disconnects the bridge pauses and retries. agistry's TTL covers a
+crashed bridge or host.
 
-1. Replay desired identity from the shared local state (`/assign` or `/register`).
-2. Peek at `/inbox?peek=1`, preserving pending mail on failures.
-3. Invoke `codex queue --thread <UUID> --message <fenced peer message>`.
-4. After a successful exit, persist a receipt, then acknowledge `/ack`.
+For each live session the bridge:
 
-Busy turns receive queued follow-ups after they finish. Idle threads can dispatch
-them immediately. This adapter does **not** implement `turn/steer`.
+1. Re-sends its identity every heartbeat (`/assign`, or `/register` before it has
+   joined), so it survives a registry restart or wipe.
+2. Every poll, peeks at `/inbox?peek=1` and queues each message with
+   `codex queue --thread <id>`. A busy turn gets it when it finishes; an idle thread
+   can start on it right away.
+3. Records a receipt, then `/ack`s.
 
-Receipts prevent duplicate enqueueing after an acknowledgement failure or bridge
-restart. A crash after Codex accepts a message but before the receipt commits can
-still produce a duplicate; each message carries a stable `msg_id` for the agent
-to recognize. Delivery is **at least once**, not exactly once. A dashboard
-"delivered" mark means Codex accepted the input, not that the agent completed
-the requested work. Codex owns accepted queue items; its downstream turn failures
-are not Agistry acknowledgements of completed work.
+Delivery is **at least once**: receipts stop most duplicates, but a crash between
+Codex accepting a message and the receipt being saved can repeat one. Each message
+carries a stable `msg_id`. "Delivered" on the dashboard means Codex accepted the
+message, not that the work is done. A `task:role` conflict pauses delivery for that
+session and leaves the same `.conflict` notice the CLI uses.
 
-Task/role conflicts create the same `.conflict` notice used by the shared CLI.
-The bridge pauses delivery for that session until identity reconciliation succeeds.
-After an Agistry restart/wipe, desired identity is replayed on the next heartbeat.
+## Settings and troubleshooting
 
-Runtime files live beneath `~/.config/agistry/state/codex/<home-hash>/`:
-session lifecycle markers, `bridge.log`, a lock, and `receipts.sqlite` (IDs only,
-no message bodies). The bridge runs detached, retries daemon outages, and starts
-again on the next SessionStart if it crashes. Run it in the foreground to diagnose:
+Optional, in `~/.config/agistry/client.env`:
+
+| Variable | Default | |
+| --- | --- | --- |
+| `AGISTRY_HEARTBEAT_SEC` | `120` | Heartbeat interval |
+| `AGISTRY_CODEX_POLL_SEC` | `4` | Inbox poll interval |
+| `AGISTRY_CODEX_BIN` | `codex` | Codex CLI to use |
+| `AGISTRY_STATE_DIR` | `~/.config/agistry/state` | Local state |
+
+The bridge's files (`bridge.log`, lock, `receipts.sqlite` holding message ids only)
+live in `~/.config/agistry/state/codex/<home-hash>/`. A crashed bridge restarts on
+the next SessionStart. To watch it, run it in the foreground:
 
 ```bash
 bash ~/.codex/agistry/agistry-codex.sh bridge
 ```
 
-`AGISTRY_STATE_DIR`, `AGISTRY_HEARTBEAT_SEC` (120), `AGISTRY_CODEX_POLL_SEC` (4),
-and `AGISTRY_CODEX_BIN` can be set in the shared client config. Leave resource
-provider supervision with the existing host providers; no second device discovery
-daemon is started by this adapter.
+The installer also sets up the host's [resource providers](../providers/README.md) as
+user services for whatever `AGISTRY_PROVIDERS` lists; they don't depend on sessions.
 
-## Validate
+## Tests
 
 ```bash
 python3 -m unittest discover -s clients/codex -p 'test_*.py' -v
-# Optional real CLI smoke test (Node 22+, local fixture servers, no external model):
-node clients/codex/smoke-queue.mjs
+node clients/codex/smoke-queue.mjs   # optional: real CLI against local fixtures (Node 22+)
 ```

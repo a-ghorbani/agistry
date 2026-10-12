@@ -1,93 +1,114 @@
 # agistry × Claude Code
 
-Make every Claude Code session auto-join the agistry registry, let an agent declare
-its role autonomously, and (optionally) have handoffs from other agents wake a
-running session.
+Makes every Claude Code session join the agistry registry on its own, gives the agent
+the `agistry` skill to declare its task and role and message other agents, and
+(optionally) wakes a running session when a handoff arrives.
 
-| Piece | Type | What it does |
-| --- | --- | --- |
-| `hooks/agistry-register.sh` | SessionStart hook | Registers an identity stub (session id + cwd + host), writes a local desired-state file for the daemon to reconcile, nudges the agent to declare its role, and starts the heartbeat daemon. |
-| `hooks/agistry-heartbeat.sh` | daemon | Each tick **reconciles** — replays the session's full identity from the desired-state file (self-healing if the registry was wiped), which also proves liveness; surfaces a lost-`task:role` race to the agent; exits + deregisters when Claude dies. |
-| `hooks/agistry-deregister.sh` | SessionEnd hook | Marks the session `gone` and stops the heartbeat daemon when the session ends. |
-| `skills/agistry/` | Skill | One skill the agent invokes to join (record task+role), see who's around, and message peers — via an auth-wrapping CLI (`agistry.sh`). |
-| `channel/` | Channel (optional) | Live-wake: surfaces mailbox messages into a running session. See [channel/README.md](channel/README.md). |
-| `statusline/agistry-statusline.sh` | Status line (optional) | Shows the session's registration in the Claude Code TUI status bar — `🏷 role · task` once joined, `📁 <dir> · (not joined)` before. Reads the same per-session state file. |
-
-The hook can only know *identity* (it fires before any conversation); *role* is
-semantic, so the agent declares it via the skill. The hook seeds the trigger by
-injecting a nudge into the session's context.
+**Requires** `curl` and `jq`; `node` 18+ and `npm` for the live-wake channel. You also
+need a clone of this repo and a running agistry server's URL and token (see the
+[top-level README](../../README.md#run)).
 
 ## Install
 
-One script — it copies the hooks + skill into `~/.claude`, writes the config, and
-idempotently wires the hooks into `~/.claude/settings.json`. It resolves its own
-path, so run it from anywhere:
+Run on every machine that runs Claude Code. The scripts work from any directory and
+are safe to re-run.
+
+### 1. Your default profile (`~/.claude`)
 
 ```bash
-clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN
+clients/claude-code/install.sh --url http://HOST:7070 --token TOKEN --with-channel
 ```
 
-Add `--with-channel` to also install the live-wake channel (runs `npm install`):
+| Flag | Adds |
+| --- | --- |
+| `--url`, `--token` | Saved to `~/.config/agistry/client.env`, which every profile (and the Codex client) shares. Given one, only that key changes. |
+| `--with-channel` | [Live-wake](#live-wake-channel): handoffs from other agents arrive in a running session. Installs the channel and registers it as the `agistry-channel` MCP server. |
+| `--with-statusline` | [Status bar label](#status-line): `🏷 role · task` for each session. |
 
-```bash
-clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-channel
-```
+Open a new `claude` session: it appears in the dashboard, and fills in its task and
+role once the agent joins via the skill.
 
-Add `--with-statusline` to show each session's `role · task` in the Claude Code
-status bar. It's opt-in because `settings.json` holds a **single** `.statusLine`, so
-wiring it replaces any status line you already have (a backup is saved either way):
+### 2. More profiles (optional)
 
-```bash
-clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-statusline
-```
-
-That's it — being in `~/.claude/settings.json` (user scope), the hooks apply to
-**every** Claude Code session on the machine. Start a fresh session and it appears
-in the dashboard; when the agent learns its role it calls the `agistry` skill and
-the row fills in.
-
-Uninstall with `clients/claude-code/uninstall.sh`.
-
-### What it writes
-
-- `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
-- `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
-- `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
-- `~/.claude/settings.json` → `hooks.SessionStart` (startup, resume, clear) + `hooks.SessionEnd`
-- with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
-- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
-
-### Multiple Claude profiles
-
-If you run a second account via `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work1`), install
-into that profile too — the hooks resolve their own profile, and the skill paths are
-rewritten to point at it. Both profiles share `~/.config/agistry/client.env`.
+For other accounts run through `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work1`), install
+into each with `CLAUDE_DIR`. The URL and token are already saved, so leave them off:
 
 ```bash
 CLAUDE_DIR=~/.claude-work1 clients/claude-code/install.sh --with-channel
-CLAUDE_CONFIG_DIR=~/.claude-work1 claude mcp add -s user agistry-channel -- node ~/.claude-work1/agistry-channel/agistry-channel.mjs
+CLAUDE_DIR=~/.claude-work2 clients/claude-code/install.sh --with-channel
 ```
 
-The tmux client's `install.sh` wires `~/.claude` and every `~/.claude-*/` profile.
+Each profile gets its own hooks, skill and channel, pointing at that profile.
 
-## Enabling the channel
+### 3. The `claude-party` launcher (with `--with-channel`)
 
-The channel is **not** wired automatically. Register it once as an MCP server (the
-`--dangerously-load-development-channels` flag takes a **name**, not a path), then
-launch live-wake sessions with an alias that sets the activation env var:
+The channel only runs in sessions started with it switched on. The installer prints
+a launcher for the profile it set up; add it to `~/.zshrc` or `~/.bashrc`:
 
 ```bash
-claude mcp add -s user agistry-channel -- node "$HOME/.claude/agistry-channel/agistry-channel.mjs"
-alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'
+claude-party() {
+  AGISTRY_CHANNEL_ACTIVE=1 claude "$@" \
+    --dangerously-load-development-channels server:agistry-channel
+}
+claude-party-work1() {      # one per extra profile
+  CLAUDE_CONFIG_DIR="$HOME/.claude-work1" AGISTRY_CHANNEL_ACTIVE=1 claude "$@" \
+    --dangerously-load-development-channels server:agistry-channel
+}
 ```
 
-An env gate keeps it idle in every non-party session, so listing it in `mcpServers`
-is safe. See [channel/README.md](channel/README.md) for details.
+Then start sessions with `claude-party` (e.g. `claude-party --resume`). Use a
+function, not an alias: the channels flag takes a list, so arguments an alias appends
+after it would be read as channel names.
 
-## Dependencies
+### Uninstall
 
-- `curl` (required by hooks/skill).
-- `jq` (recommended — used for the idempotent `settings.json` edit and robust JSON;
-  without it the installer prints a manual snippet and the scripts fall back to
-  string interpolation).
-- `node` 18+ and `npm` (only for the optional channel).
+```bash
+clients/claude-code/uninstall.sh                              # default profile
+CLAUDE_DIR=~/.claude-work1 clients/claude-code/uninstall.sh   # another profile
+```
+
+Removes that profile's hooks, skill, channel (and its MCP registration) and status
+line, restoring any status line it wrapped. `client.env` and the host's
+[providers](../providers/README.md) stay, since other profiles may use them.
+
+## How it works
+
+| Piece | Role |
+| --- | --- |
+| `hooks/agistry-register.sh` | SessionStart (startup, resume, clear): registers the session (id, cwd, host), records it in `~/.config/agistry/state/`, starts the heartbeat, and tells the agent to join with the skill. |
+| `hooks/agistry-heartbeat.sh` | Background loop per session: re-sends the session's full identity each tick (so it survives a registry wipe), reports a lost `task:role` race to the agent, and deregisters when Claude exits. |
+| `hooks/agistry-deregister.sh` | SessionEnd: marks the session `gone`, stops the heartbeat. |
+| `skills/agistry/` | The skill and its CLI, `agistry.sh`: `join`, `who`, `send`, `inbox`, and [resource leases](../../README.md#resources--leases). It adds the token, so the agent never handles it. |
+| `channel/` | Optional [live-wake channel](channel/README.md). |
+| `statusline/` | Optional status line. |
+
+A hook fires before any conversation, so it can only know the session's identity.
+The *role* is a judgement the agent makes, so the agent declares it with the skill.
+
+### Live-wake channel
+
+Without it, an agent sees new messages only when it runs `agistry.sh inbox`. With it,
+messages are pushed into the running `claude-party` session as they arrive. Details
+and caveats: [channel/README.md](channel/README.md).
+
+### Status line
+
+`--with-statusline` shows `🏷 role · task` once the session has joined, and
+`📁 <dir> · (not joined)` before. A profile can have only one status line, so an
+existing one is kept and the label is appended to its output: `<yours> │ 🏷 role · task`.
+An older copy of this script is replaced instead, so the label doesn't show twice.
+Codex has no equivalent: its status line takes built-in items only.
+
+### Files
+
+Per profile (`~/.claude`, or `$CLAUDE_DIR`):
+
+- `hooks/agistry-{register,deregister,heartbeat}.sh`, `skills/agistry/`
+- `settings.json`: the SessionStart and SessionEnd hooks, plus `.statusLine` with
+  `--with-statusline` (a backup is saved on every change)
+- `agistry-channel/` and the `agistry-channel` user-scope MCP server, with `--with-channel`
+- `statusline/agistry-statusline.sh` (and `.prev.json` holding the status line it
+  wraps), with `--with-statusline`
+
+Shared by the whole host: `~/.config/agistry/client.env` (mode `0600`),
+`~/.config/agistry/state/`, and `~/.config/agistry/providers/`.

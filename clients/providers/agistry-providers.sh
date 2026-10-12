@@ -1,96 +1,34 @@
 #!/usr/bin/env bash
-# Launcher for agistry resource providers.
+# Show this host's agistry resource providers. They run as user services (launchd on
+# macOS, systemd on Linux) that install.sh sets up for each name in AGISTRY_PROVIDERS
+# (~/.config/agistry/client.env); this script only reports on them.
 #
-# Nothing runs unless this host is explicitly configured to run it. Set in
-# ~/.config/agistry/client.env:
+#   agistry-providers.sh list      # available providers, and which are enabled
+#   agistry-providers.sh status    # whether each enabled one is running
 #
-#   AGISTRY_PROVIDERS="adb"          # space/comma separated; unset or empty = none
-#   AGISTRY_PROVIDER_INTERVAL=300    # re-announce cadence, seconds
-#
-# Most hosts have no devices attached and should run no provider at all, so the
-# default is none and this script exits immediately when unconfigured. One process
-# per provider per host: a pidfile guard makes repeat invocations idempotent, so
-# every Claude session can call `start` without stacking daemons.
-#
-#   agistry-providers.sh start|stop|status|list
+# To change which run: edit AGISTRY_PROVIDERS, then re-run clients/providers/install.sh.
 set -u
 
 [ -f "$HOME/.config/agistry/client.env" ] && . "$HOME/.config/agistry/client.env"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INTERVAL="${AGISTRY_PROVIDER_INTERVAL:-300}"
-RUNDIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-
-# space/comma separated -> word list
 enabled() { printf '%s' "${AGISTRY_PROVIDERS:-}" | tr ',' ' '; }
 
-pidfile() { printf '%s/agistry-provider-%s.pid' "$RUNDIR" "$1"; }
-script_for() { printf '%s/agistry-%s-provider.sh' "$DIR" "$1"; }
-
-alive() {
-  local p; p="$(cat "$(pidfile "$1")" 2>/dev/null)" || return 1
-  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+status_one() {
+  case "$(uname -s)" in
+    Darwin)
+      local pid
+      pid="$(launchctl print "gui/$(id -u)/dev.agistry.provider.$1" 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p')"
+      if [ -n "$pid" ]; then echo "$1: running (launchd, pid $pid)"
+      elif launchctl print "gui/$(id -u)/dev.agistry.provider.$1" >/dev/null 2>&1; then
+        echo "$1: loaded but not running — see ~/Library/Logs/agistry/provider-$1.log"
+      else echo "$1: not installed — re-run clients/providers/install.sh"; fi ;;
+    Linux)
+      echo "$1: $(systemctl --user is-active "agistry-provider@$1" 2>/dev/null || true) (systemd agistry-provider@$1)" ;;
+    *) echo "$1: no service manager on this OS" ;;
+  esac
 }
 
-# A provider belongs to the HOST, not to whoever started it: the devices stay plugged
-# in after a Claude session ends. setsid puts it in its own session and process group so
-# it outlives the caller's terminal, and gives stop_one a group to kill -- otherwise the
-# `sleep` between announces would be orphaned rather than stopped.
-# claim_slot creates the pidfile atomically (noclobber), so exactly one caller wins
-# even if several sessions start at the same moment.
-claim_slot() { ( set -o noclobber; echo $$ > "$1" ) 2>/dev/null; }
-
-start_one() {
-  local n="$1" s pf; s="$(script_for "$n")"; pf="$(pidfile "$n")"
-  if [ ! -x "$s" ]; then echo "no such provider: $n (looked for $s)" >&2; return 1; fi
-  if ! claim_slot "$pf"; then
-    # somebody holds the slot: either a live daemon, or a pidfile left by a dead one
-    if alive "$n"; then echo "$n: already running (pid $(cat "$pf"))"; return 0; fi
-    rm -f "$pf"
-    claim_slot "$pf" || { echo "$n: another starter won the race"; return 0; }
-  fi
-  local pid
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$s" --loop "$INTERVAL" >/dev/null 2>&1 < /dev/null &
-    pid=$!
-  else
-    nohup "$s" --loop "$INTERVAL" >/dev/null 2>&1 < /dev/null &   # fallback: SIGHUP-proof only
-    pid=$!
-  fi
-  echo "$pid" > "$pf"
-  echo "$n: started (pid $pid)"
-}
-
-stop_one() {
-  local n="$1" p; p="$(cat "$(pidfile "$n")" 2>/dev/null)"
-  if [ -n "${p:-}" ] && kill -0 "$p" 2>/dev/null; then
-    # kill the whole process group when we own one (negative pid), so the in-flight
-    # sleep goes too; fall back to the bare pid if it is not a group leader.
-    kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null
-    echo "$n: stopped (pid $p)"
-  else
-    echo "$n: not running"
-  fi
-  rm -f "$(pidfile "$n")"
-}
-
-case "${1:-start}" in
-  start)
-    set -- $(enabled)
-    [ $# -eq 0 ] && { echo "AGISTRY_PROVIDERS unset — no providers to start"; exit 0; }
-    for n in "$@"; do start_one "$n"; done ;;
-  stop)
-    set -- $(enabled)
-    if [ $# -eq 0 ]; then
-      echo "AGISTRY_PROVIDERS unset — nothing to stop"
-    else
-      for n in "$@"; do stop_one "$n"; done
-    fi ;;
-  status)
-    set -- $(enabled)
-    [ $# -eq 0 ] && { echo "AGISTRY_PROVIDERS unset — no providers configured"; exit 0; }
-    for n in "$@"; do
-      if alive "$n"; then echo "$n: running (pid $(cat "$(pidfile "$n")"))"; else echo "$n: stopped"; fi
-    done ;;
+case "${1:-status}" in
   list)
     echo "available:"
     for f in "$DIR"/agistry-*-provider.sh; do
@@ -98,5 +36,9 @@ case "${1:-start}" in
       n="${f##*/agistry-}"; echo "  ${n%-provider.sh}"
     done
     echo "enabled (AGISTRY_PROVIDERS): ${AGISTRY_PROVIDERS:-<none>}" ;;
-  *) sed -n '2,17p' "$0" ;;
+  status)
+    set -- $(enabled)
+    [ $# -eq 0 ] && { echo "AGISTRY_PROVIDERS unset — no providers enabled"; exit 0; }
+    for n in "$@"; do status_one "$n"; done ;;
+  *) sed -n '2,9p' "$0" ;;
 esac

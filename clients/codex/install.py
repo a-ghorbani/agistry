@@ -68,6 +68,10 @@ def main():
         config.write_text(text.lstrip("\n"))
         config.chmod(0o600)
 
+    # Resource providers are host-wide and shared with the Claude Code client; run
+    # after the config is written, since it decides which providers run.
+    subprocess.run(["bash", str(here.parent / "providers/install.sh")], check=True)
+
     hooks_path = codex_dir / "hooks.json"
     hooks = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
     hook_command = shlex.join(["bash", str(runtime / "agistry-codex.sh"), "hook"])
