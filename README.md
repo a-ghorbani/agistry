@@ -228,10 +228,10 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
 
-`agent_kind` accepts `codex`, `claude`, or `unknown`. Omit it to preserve an
+`agent_kind` accepts `codex`, `claude`, `opencode`, `pi`, or `unknown`. Omit it to preserve an
 existing value; new sessions from older clients default to `unknown`. Client
 hooks and reconcilers report their own kind. The shared CLI accepts
-`who [task] [role] --kind codex` (also `claude` or `unknown`).
+`who [task] [role] --kind codex` (also `claude`, `opencode`, `pi` or `unknown`).
 
 The `agent_kind` column changes the database schema. Follow the clean-cutover
 policy below when upgrading an existing registry; rebuilding the binary alone
