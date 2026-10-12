@@ -48,7 +48,7 @@ echo "  library -> ~/.config/agistry/lib/agistry-session.mjs"
 
 # 3. skill, reworded from the Claude Code one for any agent
 SKILL="$HOME/.agents/skills/agistry"
-SRC="$CLIENTS/claude-code/skills/agistry"
+SRC="$HERE/skill/agistry"
 mkdir -p "$SKILL"
 python3 - "$SRC/SKILL.md" "$SKILL/SKILL.md" <<'PY'
 import sys
