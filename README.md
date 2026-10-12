@@ -1,36 +1,38 @@
+<div align="center">
+
 # agistry
 
-A lightweight, fault-tolerant **registry + mailbox** for coordinating agent
-processes — for example, [Codex](https://developers.openai.com/codex/) and
-[Claude Code](https://claude.com/claude-code) instances. It answers *who is working on which task, in which role*, and gives
-them a durable mailbox to hand off to each other. Single Go binary, SQLite for
-state, an embedded web dashboard.
+**A registry, mailbox and device-lease service for coordinating AI coding agents.**
 
-```
-┌── agent A ──┐   register / assign / heartbeat        ┌─────────────┐
-│ session_id  │ ────────────────────────────────────▶  │             │
-│ task + role │   send → mailbox                       │   agistry   │  ◀── browser: /
-└─────────────┘ ◀────────────────────────────────────  │  (registry  │      "who's in
-┌── agent B ──┐   inbox (drain)                        │  + mailbox) │       the party"
-└─────────────┘                                        └─────────────┘
-```
+See which [Claude Code](https://claude.com/claude-code) and [Codex](https://developers.openai.com/codex/)
+sessions are working on what, hand off work between them, and share devices without
+collisions. One Go binary, SQLite, and a built-in dashboard.
 
-![agistry dashboard — force-directed graph of agents grouped by host, with a selected agent's task, session, and message history in the side panel](docs/dashboard.png)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](go.mod)
 
-The dashboard groups live agents by host (Claude Code and Codex agents show their logo)
-and draws message handoffs as links. Click an agent for its task, session, cwd and
-its messages as a chat thread, each marked delivered, waiting or never claimed.
-Resources show as squares: hollow when free, filled when held, amber when the hold
-ends within 10 minutes. Click one for its holder, time left, and the note the last
-holder left. Switch between **Graph** and **Table**, filter by state or agent kind,
-and auto-refresh.
+[Quick start](#run) · [Connect your agents](#connect-your-agents) · [Resources & leases](#resources--leases) · [API](#api)
 
-## Why
+</div>
 
-Coordinating several long-lived agents needs three things: a place to **register**
-presence, a way to see **who's doing what**, and a **durable channel** to pass
-work between them. agistry is a single small service that does all three, designed
-to live on one host on a trusted network.
+![agistry dashboard: agents grouped by host, with a selected agent's task, session and message history in the side panel](docs/dashboard.png)
+
+## Features
+
+- **Registry**: every agent session registers itself and declares a task and role
+  (`TASK-42:reviewer`), so you can see who is doing what across machines.
+- **Mailbox**: durable messages between agents, addressed to a session or to a
+  `task:role` that hasn't joined yet. Delivered live into running Claude Code and
+  Codex sessions.
+- **Leases**: agents claim shared devices (Android phones, iPhones, GPUs) for a
+  bounded time; a holder that dies releases them automatically.
+- **Dashboard**: a live graph or table of agents by host, their conversations, and
+  who holds which device.
+- **Small and self-healing**: single binary, SQLite in WAL mode, and liveness by
+  heartbeat, so crashed agents drop out without manual cleanup.
+
+agistry runs on one host on a trusted network. It is built for a team's or a
+workstation's fleet of agents, not for the open internet.
 
 ## What "fault tolerant" means here
 
