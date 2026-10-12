@@ -122,10 +122,11 @@ list_sessions() {
     function ago(d) {
       return d < 60 ? "" : d < 3600 ? int(d / 60) "m" : d < 86400 ? int(d / 3600) "h" : int(d / 86400) "d"
     }
-    # Claude: the agistry task/role it joined with. Everyone: the title the agent set,
-    # minus its decorations. Empty when the title is only a default.
-    function label(cmd, ppid, title,    pid, t) {
-      if (cmd == "claude" && (pid = find(ppid, "claude", 2)) != "" && (t = agistry(pid)) != "")
+    # Claude, opencode, pi: the agistry task/role the session joined with. Everyone:
+    # the title the agent set, minus its decorations. Empty when the title is only a
+    # default.
+    function label(cmd, ppid, title,    t) {
+      if ((cmd == "claude" || cmd == "opencode" || cmd == "pi") && (t = joined(ppid, cmd, 3)) != "")
         return t
       t = title
       if (cmd == "claude") {
@@ -142,11 +143,13 @@ list_sessions() {
       }
       return t
     }
-    function find(pid, want, depth,    k, n, i, r) {
-      if (comm[pid] == want) return pid
+    # The agistry label of the first process named `want` under pid that has one: the
+    # agent process itself may sit below a launcher of the same name.
+    function joined(pid, want, depth,    k, n, i, r) {
+      if (comm[pid] == want && (r = agistry(pid)) != "") return r
       if (depth == 0) return ""
       n = split(kids[pid], k, " ")
-      for (i = 1; i <= n; i++) if ((r = find(k[i], want, depth - 1)) != "") return r
+      for (i = 1; i <= n; i++) if ((r = joined(k[i], want, depth - 1)) != "") return r
       return ""
     }
     function agistry(pid,    line, a, json, task, role) {
