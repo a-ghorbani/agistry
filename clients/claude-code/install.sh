@@ -54,15 +54,6 @@ chmod 0644 "$CLAUDE_DIR/skills/agistry/SKILL.md"
 install -m 0755 "$HERE/skills/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
 echo "  skill  -> $CLAUDE_DIR/skills/agistry/"
 
-# 2b. resource providers: host-wide, not per profile, so they go to one shared place
-#     (inert unless AGISTRY_PROVIDERS names one). Drop the per-profile copy that older
-#     installs put here; a provider already running from it keeps running.
-"$HERE/../providers/install.sh"
-if [ -d "$CLAUDE_DIR/providers" ]; then
-  rm -rf "$CLAUDE_DIR/providers"
-  echo "  removed old per-profile copy $CLAUDE_DIR/providers"
-fi
-
 # 3. config. Shared by every profile, so only the keys given are replaced; the rest
 #    (the other key, AGISTRY_PROVIDERS, ...) are kept.
 if [ -n "$URL" ] || [ -n "$TOKEN" ]; then
@@ -83,6 +74,15 @@ if [ -n "$URL" ] || [ -n "$TOKEN" ]; then
   echo "  config -> $CFG"
 elif [ ! -f "$CFG" ]; then
   echo "  config -> NONE YET. Create $CFG with AGISTRY_URL + AGISTRY_TOKEN (or re-run with --url/--token)."
+fi
+
+# 3b. resource providers: host-wide, not per profile, so they go to one shared place,
+#     run as user services for each name in AGISTRY_PROVIDERS (after the config step,
+#     which may have just written it). Drop the per-profile copy older installs left.
+"$HERE/../providers/install.sh"
+if [ -d "$CLAUDE_DIR/providers" ]; then
+  rm -rf "$CLAUDE_DIR/providers"
+  echo "  removed old per-profile copy $CLAUDE_DIR/providers"
 fi
 
 # 4. wire hooks into settings.json (idempotent; needs jq)

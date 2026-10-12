@@ -106,7 +106,7 @@ appears in the dashboard.
 | --- | --- | --- |
 | Claude Code | `clients/claude-code/install.sh --url http://HOST:7070 --token TOKEN --with-channel` | [clients/claude-code](clients/claude-code/README.md): more profiles, the `claude-party` launcher, status line |
 | Codex | `bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN`, then trust the hooks with `/hooks` in Codex | [clients/codex](clients/codex/README.md) |
-| Devices (phones) | Installed by either client; switch on with `AGISTRY_PROVIDERS` | [clients/providers](clients/providers/README.md) |
+| Devices (phones) | Set `AGISTRY_PROVIDERS` in `client.env`, then `clients/providers/install.sh` (either client installer also runs it) | [clients/providers](clients/providers/README.md) |
 | tmux sidebar | `clients/tmux/install.sh` (optional) | [clients/tmux](clients/tmux/README.md) |
 
 All clients on a machine share `~/.config/agistry/client.env`, so give the URL and
@@ -157,8 +157,8 @@ the collision still happens and now nothing detects it.
 - **Discovery belongs to the provider, not the server.** A phone is attached to a
   *host*, so only something running there can see it. A provider on that host
   announces its devices on a loop (`adb:<serial>`, `ios:<UDID>`), so they appear and
-  age out with reality. Providers are opt-in per host; see
-  [clients/providers](clients/providers/README.md). Things nothing can discover (a
+  age out with reality. Providers are opt-in per host and run as user
+  services (launchd, systemd); see [clients/providers](clients/providers/README.md). Things nothing can discover (a
   staging URL, a quota) go in `REGISTRY_RESOURCES_FILE` instead.
 
 ```bash

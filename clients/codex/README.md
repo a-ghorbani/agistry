@@ -95,9 +95,8 @@ the next SessionStart. To watch it, run it in the foreground:
 bash ~/.codex/agistry/agistry-codex.sh bridge
 ```
 
-With `AGISTRY_PROVIDERS` and `AGISTRY_PROVIDERS_AUTOSTART=1` set, the SessionStart
-hook also starts the host's [resource providers](../providers/README.md), as the
-Claude Code hook does.
+The installer also sets up the host's [resource providers](../providers/README.md) as
+user services for whatever `AGISTRY_PROVIDERS` lists; they don't depend on sessions.
 
 ## Tests
 

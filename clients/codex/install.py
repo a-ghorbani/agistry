@@ -56,9 +56,6 @@ def main():
     shutil.copy2(original / "agistry.sh", skill_dir / "agistry.sh")
     (skill_dir / "agistry.sh").chmod(0o755)
 
-    # Resource providers are host-wide and shared with the Claude Code client.
-    subprocess.run(["bash", str(here.parent / "providers/install.sh")], check=True)
-
     config = home / ".config/agistry/client.env"
     updates = {key: value for key, value in {"AGISTRY_URL": args.url, "AGISTRY_TOKEN": args.token}.items() if value is not None}
     if updates:
@@ -70,6 +67,10 @@ def main():
             text = text.rstrip("\n") + "\n" + key + "=" + shlex.quote(value) + "\n"
         config.write_text(text.lstrip("\n"))
         config.chmod(0o600)
+
+    # Resource providers are host-wide and shared with the Claude Code client; run
+    # after the config is written, since it decides which providers run.
+    subprocess.run(["bash", str(here.parent / "providers/install.sh")], check=True)
 
     hooks_path = codex_dir / "hooks.json"
     hooks = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
