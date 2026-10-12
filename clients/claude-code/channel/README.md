@@ -24,31 +24,40 @@ idle there, so it never touches the mailbox unless it is really acting as a chan
 
 ```bash
 # from clients/claude-code/
-./install.sh --with-channel
-# → installs to ~/.claude/agistry-channel and runs npm install
+./install.sh --with-channel                                # default profile
+CLAUDE_DIR=~/.claude-work1 ./install.sh --with-channel     # another profile
 ```
+
+This installs to `<profile>/agistry-channel`, runs `npm install`, and registers it
+as the user-scope MCP server `agistry-channel` for that profile (if `claude` is on
+your `PATH`; otherwise it prints the `claude mcp add` command). It has to be
+registered because the `--dangerously-load-development-channels` flag takes the
+**name** of an MCP server, not a path.
 
 Requires Node 18+ (uses global `fetch`) and `npm`. Config (registry URL + token)
 comes from `~/.config/agistry/client.env`, the same file the hooks/skill use.
 
 ## Enable
 
-The `--dangerously-load-development-channels` flag takes the **name** of a registered
-MCP server (not a path), so register it once (user scope, absolute path):
+Launch party sessions with the flag **and** the activation env var. The installer
+prints this function; add it to your shell rc:
 
 ```bash
-claude mcp add -s user agistry-channel -- node "$HOME/.claude/agistry-channel/agistry-channel.mjs"
+claude-party() {
+  AGISTRY_CHANNEL_ACTIVE=1 claude "$@" \
+    --dangerously-load-development-channels server:agistry-channel
+}
 ```
 
-Then launch party sessions with the flag **and** the activation env var. Thanks to
-the env gate, having it in `mcpServers` is safe — it idles in every non-party session:
-
-```bash
-alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'
-```
+Use a function rather than an alias: the channels flag takes a list, so arguments
+appended after it (a prompt, `--resume`, …) would be read as channel names. For
+another profile, add `CLAUDE_CONFIG_DIR="$HOME/.claude-work1"` in front — see
+[Step 3 of the client README](../README.md#step-3--add-the-claude-party-launcher-if-you-used---with-channel).
 
 Run `claude-party` from any project directory; the channel attaches and starts
-polling your inbox.
+polling your inbox. Because the server is in `mcpServers`, Claude spawns it in normal
+sessions too, but without `AGISTRY_CHANNEL_ACTIVE=1` it stays idle and never touches
+the mailbox.
 
 ## Caveats
 

@@ -99,6 +99,30 @@ sudo systemctl enable --now agistry
 curl -s http://<host>:7070/healthz           # -> ok
 ```
 
+## Connect your agents
+
+With the server running, install a client on **each machine that runs agents**,
+from a clone of this repo. Each one auto-registers sessions and gives the agent the
+`agistry` skill (join / who / send / inbox). Both installers are safe to re-run.
+
+| Agent | Install | Full guide |
+| --- | --- | --- |
+| Claude Code | `clients/claude-code/install.sh --url http://HOST:7070 --token TOKEN --with-channel` | [clients/claude-code/README.md](clients/claude-code/README.md) |
+| Codex | `bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN`, then trust the hooks in Codex via `/hooks` | [clients/codex/README.md](clients/codex/README.md) |
+
+Then open a fresh session; it shows up in the dashboard.
+
+- **More than one Claude profile** (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude-work1`)?
+  Install into each with `CLAUDE_DIR=~/.claude-work1 clients/claude-code/install.sh --with-channel`;
+  no need for `--url`/`--token` again — all profiles share `~/.config/agistry/client.env`.
+  See [Step 2](clients/claude-code/README.md#step-2--add-another-profile-optional).
+- **Live-wake for Claude** (handoffs arrive in a running session): `--with-channel`
+  installs and registers the channel; add the `claude-party` shell function the
+  installer prints and launch with it. See
+  [Step 3](clients/claude-code/README.md#step-3--add-the-claude-party-launcher-if-you-used---with-channel).
+- Optional: the [tmux client](clients/tmux/README.md) (session sidebar with agent
+  state) and [resource providers](#resources--leases).
+
 ## Security
 
 - **Always set `REGISTRY_TOKEN`** for any networked deployment. Clients send it as

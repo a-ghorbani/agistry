@@ -19,70 +19,103 @@ injecting a nudge into the session's context.
 
 ## Install
 
-One script — it copies the hooks + skill into `~/.claude`, writes the config, and
-idempotently wires the hooks into `~/.claude/settings.json`. It resolves its own
-path, so run it from anywhere:
+Do this on every machine that runs Claude Code. You need a clone of this repo, a
+running agistry server, and its URL + token (see the [top-level README](../../README.md#deploy-systemd)).
+The scripts resolve their own location, so run them from anywhere; all of them are
+safe to re-run.
 
-```bash
-clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN
-```
-
-Add `--with-channel` to also install the live-wake channel (runs `npm install`):
+### Step 1 — install into your default profile (`~/.claude`)
 
 ```bash
 clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-channel
 ```
 
-Add `--with-statusline` to show each session's `role · task` in the Claude Code
-status bar. It's opt-in because `settings.json` holds a **single** `.statusLine`, so
-wiring it replaces any status line you already have (a backup is saved either way):
+This copies the hooks + skill into `~/.claude`, saves the URL and token to
+`~/.config/agistry/client.env`, and wires the hooks into `~/.claude/settings.json`
+(a backup is saved). Optional flags:
 
-```bash
-clients/claude-code/install.sh --url http://YOUR_HOST:7070 --token YOUR_TOKEN --with-statusline
-```
+- `--with-channel` — also install the live-wake channel, so handoffs from other
+  agents arrive in a running session (needs `node` 18+ and `npm`), and register it
+  with Claude as the `agistry-channel` MCP server (if the `claude` CLI is on your
+  `PATH`; otherwise the installer prints the command to run). Leave it out if you
+  only want registration + the skill.
+- `--with-statusline` — show `role · task` in the Claude Code status bar. Opt-in
+  because `settings.json` holds a **single** `.statusLine`, so this replaces any
+  status line you already have (a backup is saved).
 
-That's it — being in `~/.claude/settings.json` (user scope), the hooks apply to
-**every** Claude Code session on the machine. Start a fresh session and it appears
-in the dashboard; when the agent learns its role it calls the `agistry` skill and
-the row fills in.
+Start a fresh `claude` session: it appears in the dashboard, and the row fills in
+once the agent joins with the `agistry` skill. For live-wake, finish with Step 3.
 
-Uninstall with `clients/claude-code/uninstall.sh`.
+### Step 2 — add another profile (optional)
 
-### What it writes
-
-- `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
-- `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
-- `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
-- `~/.claude/settings.json` → `hooks.SessionStart` (startup, resume, clear) + `hooks.SessionEnd`
-- with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`)
-- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
-
-### Multiple Claude profiles
-
-If you run a second account via `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work1`), install
-into that profile too — the hooks resolve their own profile, and the skill paths are
-rewritten to point at it. Both profiles share `~/.config/agistry/client.env`.
+If you run other accounts via `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work1`,
+`~/.claude-work2`), install into each one by pointing `CLAUDE_DIR` at it:
 
 ```bash
 CLAUDE_DIR=~/.claude-work1 clients/claude-code/install.sh --with-channel
-CLAUDE_CONFIG_DIR=~/.claude-work1 claude mcp add -s user agistry-channel -- node ~/.claude-work1/agistry-channel/agistry-channel.mjs
+CLAUDE_DIR=~/.claude-work2 clients/claude-code/install.sh --with-channel
 ```
 
-The tmux client's `install.sh` wires `~/.claude` and every `~/.claude-*/` profile.
+> **Note on `--url` / `--token`:** every profile shares the one
+> `~/.config/agistry/client.env`, so you can **leave both flags off** when adding a
+> profile — Step 1 already saved them. Passing either one updates just that key for
+> **all** profiles; the other saved settings are kept.
 
-## Enabling the channel
+Each profile gets its own copy of the hooks, skill, and channel; the hooks detect
+which profile they run in, and the skill's paths are rewritten to point at it. (The
+[tmux client](../tmux/README.md) installer wires `~/.claude` and every `~/.claude-*/`
+profile on its own.)
 
-The channel is **not** wired automatically. Register it once as an MCP server (the
-`--dangerously-load-development-channels` flag takes a **name**, not a path), then
-launch live-wake sessions with an alias that sets the activation env var:
+### Step 3 — add the `claude-party` launcher (if you used `--with-channel`)
+
+The installer already registered the channel; what's left is a way to start
+sessions with it switched on. It prints the launcher for the profile it just set
+up; add it to your `~/.zshrc` / `~/.bashrc`:
 
 ```bash
-claude mcp add -s user agistry-channel -- node "$HOME/.claude/agistry-channel/agistry-channel.mjs"
-alias claude-party='AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'
+claude-party() {
+  AGISTRY_CHANNEL_ACTIVE=1 claude "$@" \
+    --dangerously-load-development-channels server:agistry-channel
+}
+# one per extra profile
+claude-party-work1() {
+  CLAUDE_CONFIG_DIR="$HOME/.claude-work1" AGISTRY_CHANNEL_ACTIVE=1 claude "$@" \
+    --dangerously-load-development-channels server:agistry-channel
+}
 ```
 
-An env gate keeps it idle in every non-party session, so listing it in `mcpServers`
-is safe. See [channel/README.md](channel/README.md) for details.
+Run `claude-party` (or `claude-party-work1`, e.g. `claude-party-work1 --resume`)
+from any project directory. Plain `claude` sessions don't use the channel:
+`AGISTRY_CHANNEL_ACTIVE=1` gates its polling, so it idles there. It's a function
+rather than an alias because the channels flag takes a list: anything an alias
+appends after it (a prompt, `--resume`, …) would be read as another channel name.
+See [channel/README.md](channel/README.md) for details.
+
+### Uninstall
+
+```bash
+clients/claude-code/uninstall.sh                              # default profile
+CLAUDE_DIR=~/.claude-work1 clients/claude-code/uninstall.sh   # another profile
+```
+
+This also unregisters the channel MCP server, if it points at that profile's copy.
+
+`~/.config/agistry/client.env` is left in place.
+
+### What it writes
+
+Per profile (`~/.claude` shown; `$CLAUDE_DIR` for others):
+
+- `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
+- `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
+- `~/.claude/providers/` (inert unless `AGISTRY_PROVIDERS` names one)
+- `~/.claude/settings.json` → `hooks.SessionStart` (startup, resume, clear) + `hooks.SessionEnd`
+- with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`), and the
+  `agistry-channel` user-scope MCP server (in `~/.claude.json`, or
+  `$CLAUDE_DIR/.claude.json` for other profiles)
+- with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`
+
+Shared by all profiles: `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`).
 
 ## Dependencies
 

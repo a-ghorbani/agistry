@@ -28,6 +28,15 @@ else
   echo "  skipped settings.json (no jq or no file) — remove the agistry hooks by hand."
 fi
 
+# unregister the channel MCP server, but only if it is this profile's copy
+if command -v claude >/dev/null 2>&1; then
+  if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then cli() { env -u CLAUDE_CONFIG_DIR claude "$@"; }
+  else cli() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" claude "$@"; }; fi
+  if cli mcp get agistry-channel 2>/dev/null | grep -qF "$CLAUDE_DIR/agistry-channel/"; then
+    cli mcp remove -s user agistry-channel >/dev/null 2>&1 && echo "  channel MCP server unregistered"
+  fi
+fi
+
 rm -f "$CLAUDE_DIR/hooks/agistry-register.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh" "$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
 # stop any provider daemons before removing the launcher that knows their pidfiles
 [ -x "$CLAUDE_DIR/providers/agistry-providers.sh" ] && "$CLAUDE_DIR/providers/agistry-providers.sh" stop >/dev/null 2>&1

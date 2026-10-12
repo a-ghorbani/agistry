@@ -16,6 +16,13 @@ CFG="$HOME/.config/agistry/client.env"
 # CLI needs to act on a non-default profile.
 CLAUDE_DIR_SHOWN="${CLAUDE_DIR/#"$HOME"/"~"}"
 if [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then CLI_ENV=""; else CLI_ENV="CLAUDE_CONFIG_DIR=$CLAUDE_DIR "; fi
+# Run the claude CLI against the target profile. The default profile keeps its user
+# config in ~/.claude.json, so it must run with CLAUDE_CONFIG_DIR unset, not pointed
+# at ~/.claude.
+claude_cli() {
+  if [ -n "$CLI_ENV" ]; then CLAUDE_CONFIG_DIR="$CLAUDE_DIR" claude "$@"
+  else env -u CLAUDE_CONFIG_DIR claude "$@"; fi
+}
 
 URL=""; TOKEN=""; WITH_CHANNEL=0; WITH_STATUSLINE=0
 while [ $# -gt 0 ]; do
@@ -61,12 +68,22 @@ if [ -d "$HERE/../providers" ]; then
   echo "  providers -> $CLAUDE_DIR/providers/ (none run until AGISTRY_PROVIDERS is set)"
 fi
 
-# 3. config (only written if --url/--token given, or if missing)
+# 3. config. Shared by every profile, so only the keys given are replaced; the rest
+#    (the other key, AGISTRY_PROVIDERS, ...) are kept.
 if [ -n "$URL" ] || [ -n "$TOKEN" ]; then
   mkdir -p "$(dirname "$CFG")"
   ( umask 077
-    { [ -n "$URL" ]   && echo "AGISTRY_URL=$URL";   true
-      [ -n "$TOKEN" ] && echo "AGISTRY_TOKEN=$TOKEN"; true; } > "$CFG" )
+    tmp="$(mktemp)"
+    [ -f "$CFG" ] && cat "$CFG" > "$tmp"
+    if [ -n "$URL" ]; then
+      grep -v '^AGISTRY_URL=' "$tmp" > "$tmp.new" || true; mv "$tmp.new" "$tmp"
+      echo "AGISTRY_URL=$URL" >> "$tmp"
+    fi
+    if [ -n "$TOKEN" ]; then
+      grep -v '^AGISTRY_TOKEN=' "$tmp" > "$tmp.new" || true; mv "$tmp.new" "$tmp"
+      echo "AGISTRY_TOKEN=$TOKEN" >> "$tmp"
+    fi
+    mv "$tmp" "$CFG" )
   chmod 600 "$CFG"
   echo "  config -> $CFG"
 elif [ ! -f "$CFG" ]; then
@@ -95,8 +112,10 @@ else
   echo "  jq not found — add the SessionStart/SessionEnd hooks to $SETTINGS by hand (see README)."
 fi
 
-# 5. optional channel (live-wake). Deliberately NOT added to mcpServers — it must
-#    only run via the explicit launch flag, or it would drain inboxes silently.
+# 5. optional channel (live-wake). Registered as a user-scope MCP server so the
+#    --dangerously-load-development-channels flag can find it by name. That makes
+#    Claude spawn it in every session, which is safe: it stays idle unless
+#    AGISTRY_CHANNEL_ACTIVE=1 is set, which only the claude-party launcher does.
 if [ "$WITH_CHANNEL" = 1 ]; then
   CH="$CLAUDE_DIR/agistry-channel"
   mkdir -p "$CH"
@@ -108,11 +127,31 @@ if [ "$WITH_CHANNEL" = 1 ]; then
   else
     echo "  channel -> $CH (npm not found — install Node deps there manually)"
   fi
+  MCP_ADD="${CLI_ENV}claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
+  if command -v claude >/dev/null 2>&1; then
+    # Re-register so a re-run (or a stale path) ends up pointing at this profile's copy.
+    claude_cli mcp remove -s user agistry-channel >/dev/null 2>&1 || true
+    if claude_cli mcp add -s user agistry-channel -- node "$CH/agistry-channel.mjs" >/dev/null 2>&1; then
+      echo "  channel registered as MCP server 'agistry-channel' (user scope)"
+    else
+      echo "  channel MCP registration FAILED — run it yourself:"
+      echo "    $MCP_ADD"
+    fi
+  else
+    echo "  claude CLI not found — register the channel yourself:"
+    echo "    $MCP_ADD"
+  fi
+  PARTY="claude-party"
+  [ -n "$CLI_ENV" ] && PARTY="claude-party-$(basename "$CLAUDE_DIR" | sed 's/^\.claude-//; s/^\.//')"
   echo
-  echo "  To enable live-wake (channel), register it as an MCP server (the flag needs a NAME):"
-  echo "    ${CLI_ENV}claude mcp add -s user agistry-channel -- node $CH/agistry-channel.mjs"
-  echo "  Then add this alias (the env var gates polling so it stays idle in normal sessions):"
-  echo "    alias claude-party='${CLI_ENV}AGISTRY_CHANNEL_ACTIVE=1 claude --dangerously-load-development-channels server:agistry-channel'"
+  echo "  Last step for live-wake: add this launcher to your ~/.zshrc or ~/.bashrc, then"
+  echo "  start sessions with '$PARTY' (accepts the usual claude args, e.g. --resume):"
+  echo
+  echo "    $PARTY() {"
+  echo "      ${CLI_ENV}AGISTRY_CHANNEL_ACTIVE=1 claude \"\$@\" \\"
+  echo "        --dangerously-load-development-channels server:agistry-channel"
+  echo "    }"
+  echo
 fi
 
 # 6. optional status line. Opt-in because settings.json holds a SINGLE .statusLine —
