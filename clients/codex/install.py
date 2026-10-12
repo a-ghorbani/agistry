@@ -56,6 +56,9 @@ def main():
     shutil.copy2(original / "agistry.sh", skill_dir / "agistry.sh")
     (skill_dir / "agistry.sh").chmod(0o755)
 
+    # Resource providers are host-wide and shared with the Claude Code client.
+    subprocess.run(["bash", str(here.parent / "providers/install.sh")], check=True)
+
     config = home / ".config/agistry/client.env"
     updates = {key: value for key, value in {"AGISTRY_URL": args.url, "AGISTRY_TOKEN": args.token}.items() if value is not None}
     if updates:

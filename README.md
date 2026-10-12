@@ -220,7 +220,10 @@ the collision still happens and now nothing detects it.
   `clients/providers/agistry-adb-provider.sh` is the reference: it runs `adb devices`
   and posts what it finds, on a loop, so devices appear and age out with reality.
   Providers are **opt-in per host** — nothing starts unless `AGISTRY_PROVIDERS` names
-  it, since most hosts have no devices attached. Static things with nobody to announce
+  it, since most hosts have no devices attached. They are installed once per host
+  (`~/.config/agistry/providers/`, by either client installer) and started by a Claude
+  Code or Codex session, or by a systemd user unit — see
+  [clients/providers/README.md](clients/providers/README.md). Static things with nobody to announce
   them (a staging URL, a quota) go in `REGISTRY_RESOURCES_FILE` instead.
 
 ```bash

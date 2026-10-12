@@ -43,12 +43,14 @@ if command -v claude >/dev/null 2>&1; then
 fi
 
 rm -f "$CLAUDE_DIR/hooks/agistry-register.sh" "$CLAUDE_DIR/hooks/agistry-deregister.sh" "$CLAUDE_DIR/hooks/agistry-heartbeat.sh"
-# stop any provider daemons before removing the launcher that knows their pidfiles
-[ -x "$CLAUDE_DIR/providers/agistry-providers.sh" ] && "$CLAUDE_DIR/providers/agistry-providers.sh" stop >/dev/null 2>&1
+# Providers are host-wide (~/.config/agistry/providers) and may serve other profiles or
+# Codex, so they are left running; clients/providers/install.sh --uninstall removes them.
+# $CLAUDE_DIR/providers is only an old per-profile copy.
 rm -rf "$CLAUDE_DIR/skills/agistry" "$CLAUDE_DIR/agistry-channel" "$CLAUDE_DIR/providers"
 # only our files: the user may keep their own scripts in statusline/
 rm -f "$SL" "$SL_PREV"
 rmdir "$CLAUDE_DIR/statusline" 2>/dev/null || true
-echo "  removed hooks, skill, channel, statusline, and providers"
+echo "  removed hooks, skill, channel, and statusline"
+echo "  left the host's providers in place (clients/providers/install.sh --uninstall removes them)"
 echo "  left ~/.config/agistry/client.env in place (delete it yourself if you want)"
 echo "Done."

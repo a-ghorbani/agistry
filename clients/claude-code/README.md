@@ -112,7 +112,6 @@ Per profile (`~/.claude` shown; `$CLAUDE_DIR` for others):
 
 - `~/.claude/hooks/agistry-{register,deregister,heartbeat}.sh`
 - `~/.claude/skills/agistry/{SKILL.md,agistry.sh}`
-- `~/.claude/providers/` (inert unless `AGISTRY_PROVIDERS` names one)
 - `~/.claude/settings.json` → `hooks.SessionStart` (startup, resume, clear) + `hooks.SessionEnd`
 - with `--with-channel`: `~/.claude/agistry-channel/` (+ `node_modules`), and the
   `agistry-channel` user-scope MCP server (in `~/.claude.json`, or
@@ -120,7 +119,13 @@ Per profile (`~/.claude` shown; `$CLAUDE_DIR` for others):
 - with `--with-statusline`: `~/.claude/statusline/agistry-statusline.sh` + `settings.json` → `.statusLine`,
   plus `agistry-statusline.prev.json` beside it when it wraps (or replaced) an existing status line
 
-Shared by all profiles: `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`).
+Shared by all profiles (and the Codex client):
+
+- `~/.config/agistry/client.env` (`0600`: `AGISTRY_URL` + `AGISTRY_TOKEN`)
+- `~/.config/agistry/providers/` — the host's [resource providers](../providers/README.md),
+  inert unless `AGISTRY_PROVIDERS` names one. Uninstalling a profile leaves them in
+  place; `clients/providers/install.sh --uninstall` removes them. An older install's
+  per-profile `<profile>/providers/` copy is removed on re-install.
 
 ## Dependencies
 

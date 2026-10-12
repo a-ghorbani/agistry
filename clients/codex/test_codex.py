@@ -216,6 +216,23 @@ class BridgeTests(unittest.TestCase):
             self.bridge.hook({"hook_event_name": "SessionStart", "session_id": SID, **fields})
         popen.assert_not_called()
 
+    @patch("agistry_codex.subprocess.Popen")
+    def test_session_start_autostarts_shared_providers_only_when_opted_in(self, popen):
+        with tempfile.TemporaryDirectory() as home:
+            launcher = Path(home) / ".config/agistry/providers/agistry-providers.sh"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text("#!/bin/sh\n")
+            launcher.chmod(0o755)
+            event = {"hook_event_name": "SessionStart", "source": "startup", "session_id": SID}
+            for env, started in (({"AGISTRY_PROVIDERS": "adb"}, False),
+                                 ({"AGISTRY_PROVIDERS": "adb", "AGISTRY_PROVIDERS_AUTOSTART": "1"}, True)):
+                popen.reset_mock()
+                with patch.dict(os.environ, {"HOME": home, **env}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.bridge.hook(event)
+                commands = [call.args[0] for call in popen.call_args_list]
+                self.assertEqual([str(launcher), "start"] in commands, started)
+
     def test_session_end_records_closure_and_deregisters_without_context_output(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.bridge.hook({"hook_event_name": "SessionEnd", "session_id": SID})

@@ -15,6 +15,22 @@ Re-announcing revives them, so unplugging and replugging a device heals on its o
 | `agistry-providers.sh` | Launcher — starts only the providers this host is configured for |
 | `agistry-provider@.service` | systemd user unit template — one supervised provider per instance |
 | `agistry-adb-provider.sh` | Android devices reachable via `adb devices -l` on this host |
+| `install.sh` | Installs the above once per host into `~/.config/agistry/providers/` |
+
+## Install (once per host)
+
+Providers belong to the **host**, not to an agent or a Claude profile: the phones stay
+plugged in whichever session is open. So there is one copy per host, in
+`~/.config/agistry/providers/` next to the shared `client.env`. The Claude Code and
+Codex installers both put it there, or run it on its own:
+
+```bash
+clients/providers/install.sh               # copy into ~/.config/agistry/providers
+clients/providers/install.sh --uninstall   # stop running providers and remove them
+```
+
+Uninstalling a Claude profile or the Codex client leaves the providers alone, since
+other profiles or agents on the host may still rely on them.
 
 ## Nothing runs unless you configure it
 
@@ -32,23 +48,27 @@ The launcher is idempotent — a pidfile guard means one daemon per provider per
 however many times it is called:
 
 ```bash
-agistry-providers.sh list      # what exists, and what this host enables
-agistry-providers.sh start     # start the enabled ones (no-op if unset)
-agistry-providers.sh status
-agistry-providers.sh stop
+P=~/.config/agistry/providers
+$P/agistry-providers.sh list      # what exists, and what this host enables
+$P/agistry-providers.sh start     # start the enabled ones (no-op if unset)
+$P/agistry-providers.sh status
+$P/agistry-providers.sh stop
 ```
 
 Two ways to get them running, both opt-in:
 
-- **User service (preferred on a host that permanently owns devices).** Copy
-  `agistry-provider@.service` to `~/.config/systemd/user/` and
-  `systemctl --user enable --now agistry-provider@adb` — the instance name is the
-  provider. It runs the provider in the foreground so **systemd** is what notices it
-  died and restarts it; it starts at boot and does not depend on anyone opening a
-  Claude session.
-- **Session autostart.** Set `AGISTRY_PROVIDERS_AUTOSTART=1` as well, and the
-  SessionStart hook calls the launcher. Both gates must be set, so a host that has
-  not asked for providers never spawns one.
+- **User service (preferred on a Linux host that permanently owns devices).**
+  ```bash
+  cp ~/.config/agistry/providers/agistry-provider@.service ~/.config/systemd/user/
+  systemctl --user daemon-reload
+  systemctl --user enable --now agistry-provider@adb    # the instance name is the provider
+  ```
+  It runs the provider in the foreground so **systemd** is what notices it died and
+  restarts it; it starts at boot and does not depend on anyone opening a session.
+- **Session autostart** (the option on macOS). Set `AGISTRY_PROVIDERS_AUTOSTART=1` as
+  well, and the SessionStart hook of either client — Claude Code or Codex — calls the
+  launcher. Both gates must be set, so a host that has not asked for providers never
+  spawns one.
 
 Use **one or the other**. systemd supervises its copy directly and knows nothing about
 the launcher's pidfile, so enabling both announces the same devices twice — harmless,

@@ -24,6 +24,8 @@ and is safe to repeat. It installs:
 - `~/.codex/agistry/`: hook entry point and Python bridge (honors `CODEX_HOME`).
 - `~/.codex/hooks.json`: `SessionStart` / `SessionEnd` handlers.
 - `~/.agents/skills/agistry/`: the existing skill adapted for Codex and the shared CLI.
+- `~/.config/agistry/providers/`: the host's [resource providers](../providers/README.md),
+  shared with the Claude Code client; inert unless `AGISTRY_PROVIDERS` names one.
 
 In Codex, open **`/hooks`** and review/trust the installed hooks; Codex skips new
 or changed hooks until trusted. Start/resume a session after the hooks are loaded.
@@ -91,9 +93,11 @@ bash ~/.codex/agistry/agistry-codex.sh bridge
 ```
 
 `AGISTRY_STATE_DIR`, `AGISTRY_HEARTBEAT_SEC` (120), `AGISTRY_CODEX_POLL_SEC` (4),
-and `AGISTRY_CODEX_BIN` can be set in the shared client config. Leave resource
-provider supervision with the existing host providers; no second device discovery
-daemon is started by this adapter.
+and `AGISTRY_CODEX_BIN` can be set in the shared client config. With
+`AGISTRY_PROVIDERS` and `AGISTRY_PROVIDERS_AUTOSTART=1` set there, the SessionStart
+hook also starts the host's resource providers, exactly as the Claude Code hook does;
+both use the same launcher, so a host runs one daemon per provider whichever agent
+starts it. See [providers/README.md](../providers/README.md).
 
 ## Validate
 

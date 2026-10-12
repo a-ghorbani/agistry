@@ -115,9 +115,10 @@ fi
 # must both name providers in AGISTRY_PROVIDERS and opt into session autostart. A
 # pidfile guard inside the launcher keeps it to one daemon per provider per host no
 # matter how many sessions call it. On a host that permanently owns devices, prefer the
-# user service in clients/providers/ over this.
+# user service in clients/providers/ over this. Providers are host-wide, so they live in
+# one shared place rather than in this profile.
 if [ -n "${AGISTRY_PROVIDERS:-}" ] && [ "${AGISTRY_PROVIDERS_AUTOSTART:-0}" = "1" ]; then
-  PROV="$CLAUDE_DIR/providers/agistry-providers.sh"
+  PROV="$HOME/.config/agistry/providers/agistry-providers.sh"
   [ -x "$PROV" ] && nohup "$PROV" start >/dev/null 2>&1 &
 fi
 
