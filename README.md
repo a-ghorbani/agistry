@@ -4,8 +4,9 @@
 
 **A registry, mailbox and device-lease service for coordinating AI coding agents.**
 
-See which [Claude Code](https://claude.com/claude-code) and [Codex](https://developers.openai.com/codex/)
-sessions are working on what, hand off work between them, and share devices without
+See which [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/),
+[opencode](https://opencode.ai) and [pi](https://github.com/earendil-works/pi) sessions
+are working on what, hand off work between them, and share devices without
 collisions. One Go binary, SQLite, and a built-in dashboard.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -22,8 +23,8 @@ collisions. One Go binary, SQLite, and a built-in dashboard.
 - **Registry**: every agent session registers itself and declares a task and role
   (`TASK-42:reviewer`), so you can see who is doing what across machines.
 - **Mailbox**: durable messages between agents, addressed to a session or to a
-  `task:role` that hasn't joined yet. Delivered live into running Claude Code and
-  Codex sessions.
+  `task:role` that hasn't joined yet. Delivered live into running sessions of every
+  supported agent.
 - **Leases**: agents claim shared devices (Android phones, iPhones, GPUs) for a
   bounded time; a holder that dies releases them automatically.
 - **Dashboard**: a live graph or table of agents by host, their conversations, and
@@ -108,7 +109,9 @@ appears in the dashboard.
 | --- | --- | --- |
 | Claude Code | `clients/claude-code/install.sh --url http://HOST:7070 --token TOKEN --with-channel` | [clients/claude-code](clients/claude-code/README.md): more profiles, the `claude-party` launcher, status line |
 | Codex | `bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN`, then trust the hooks with `/hooks` in Codex | [clients/codex](clients/codex/README.md) |
-| Devices (phones) | Set `AGISTRY_PROVIDERS` in `client.env`, then `clients/providers/install.sh` (either client installer also runs it) | [clients/providers](clients/providers/README.md) |
+| opencode | `clients/opencode/install.sh --url http://HOST:7070 --token TOKEN` | [clients/opencode](clients/opencode/README.md) |
+| pi | `clients/pi/install.sh --url http://HOST:7070 --token TOKEN` | [clients/pi](clients/pi/README.md) |
+| Devices (phones) | Set `AGISTRY_PROVIDERS` in `client.env`, then `clients/providers/install.sh` (every client installer also runs it) | [clients/providers](clients/providers/README.md) |
 | tmux sidebar | `clients/tmux/install.sh` (optional) | [clients/tmux](clients/tmux/README.md) |
 
 All clients on a machine share `~/.config/agistry/client.env`, so give the URL and
@@ -141,8 +144,8 @@ the collision still happens and now nothing detects it.
   when the holder's session goes `gone` — and the second is why this lives in the
   registry rather than a lock file: only agistry knows the holder died. *Alive holder →
   held; dead holder → free.* The clients heartbeat independently of agent activity
-  (the Claude Code heartbeat daemon, the Codex bridge), so a lane blocked in a
-  three-hour test still holds its phone.
+  (the Claude Code heartbeat daemon, the Codex bridge, the opencode and pi plugins),
+  so a lane blocked in a three-hour test still holds its phone.
 - **A cap, so a live-but-idle holder cannot sit on a device forever.** Per resource via
   `max_hold_seconds` (set it to ~6h for phones running full e2e suites), falling back to
   `REGISTRY_LEASE_MAX_HOLD_SECONDS`. Renewal can never outrun it; hitting the cap is the
@@ -186,6 +189,9 @@ agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
     [the channel](clients/claude-code/channel/README.md).
   - **Codex bridge** — peeks the same way and hands each message to `codex queue` as a
     follow-up, `/ack`ing once Codex accepts it. See [the Codex client](clients/codex/README.md).
+  - **opencode and pi plugins** — run inside the agent and pass each message to the
+    session (`session.promptAsync`, `pi.sendMessage`), which starts a turn when idle or
+    queues it behind the current one.
   - **Manual poll** (`agistry.sh inbox`) — the agent drains its mailbox on demand;
     consume-on-read.
 

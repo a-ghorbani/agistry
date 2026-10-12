@@ -23,7 +23,7 @@ of the scripts in `~/.config/agistry/providers/`.
    ```bash
    clients/providers/install.sh
    ```
-   The Claude Code and Codex installers run it too, so if `AGISTRY_PROVIDERS` was set
+   Every agent client's installer runs it too, so if `AGISTRY_PROVIDERS` was set
    before you installed a client, the providers are already running. After changing
    the list, run it again.
 
@@ -34,7 +34,7 @@ stay logged in to, run `loginctl enable-linger $USER` once so the services keep 
 after you log out; the installer reminds you.
 
 **Uninstall:** `clients/providers/install.sh --uninstall` stops the services and
-removes the scripts. Uninstalling a Claude profile or the Codex client leaves them
+removes the scripts. Uninstalling an agent client (or one Claude profile) leaves them
 alone, since other agents on the host may use them.
 
 ## Settings

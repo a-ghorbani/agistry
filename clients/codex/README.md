@@ -26,12 +26,13 @@ writes:
 
 - `~/.codex/agistry/`: the hook entry point and the bridge (honors `CODEX_HOME`)
 - `~/.codex/hooks.json`: `SessionStart` and `SessionEnd` handlers
-- `~/.agents/skills/agistry/`: the `agistry` skill and its CLI, adapted for Codex
-- `~/.config/agistry/providers/`: the host's [resource providers](../providers/README.md),
-  shared with the Claude Code client
+- the [shared pieces](../shared/install.sh), also used by the opencode and pi clients:
+  the `agistry` skill and CLI in `~/.agents/skills/agistry/`, and the host's
+  [resource providers](../providers/README.md)
 
 **Uninstall:** there is no script yet. Remove the `agistry-codex.sh` handlers from
-`~/.codex/hooks.json`, then delete `~/.codex/agistry/` and `~/.agents/skills/agistry/`.
+`~/.codex/hooks.json`, then delete `~/.codex/agistry/` (and `~/.agents/skills/agistry/`
+if no opencode or pi client uses it).
 
 ## Use
 

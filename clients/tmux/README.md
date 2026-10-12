@@ -33,9 +33,10 @@ What it can't do for you:
 - **Restart** running Codex, opencode and pi sessions to load the hooks. Claude Code
   picks them up live.
 - **Prerequisites:** tmux 3.0+, fzf, jq. The installer warns if fzf or tmux is missing.
-- **agistry labels** need the [Claude Code client](../claude-code/README.md) (it
-  writes the state files the sidebar reads). Without it, Claude sessions fall back
-  to their pane title.
+- **agistry labels** need that agent's agistry client
+  ([Claude Code](../claude-code/README.md), [opencode](../opencode/README.md),
+  [pi](../pi/README.md)), which writes the state files the sidebar reads. Without it,
+  sessions fall back to their pane title.
 
 `clients/tmux/install.sh --uninstall` removes the hooks and `agent-state`; the
 `tmux-main` and `tmux-sidebar` links stay, as they work without it.
@@ -78,9 +79,10 @@ Session names stay as they are. A shell hook that auto-names sessions (a zsh
 agents that start sessions address them by name (`send-keys -t`), so a rename would
 break them. The sidebar shows a label instead:
 
-1. **Claude Code** — the agistry `task · role` the session joined with. Read from the
-   local state files (`state/by-pid/<claude pid>` → `state/<sid>.json`), no HTTP;
-   a by-pid file is trusted only if its recorded start time matches the live process.
+1. **Claude Code, opencode, pi** — the agistry `task · role` the session joined with.
+   Read from the local state files (`state/by-pid/<agent pid>` → `state/<sid>.json`),
+   no HTTP; a by-pid file is trusted only if its recorded start time matches the live
+   process.
 2. **Fallback, every agent** — the terminal title the agent sets itself, cleaned:
 
    | Agent | Title it sets | Label |
