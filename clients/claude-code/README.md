@@ -78,7 +78,7 @@ line, restoring any status line it wrapped. `client.env` and the host's
 | `hooks/agistry-register.sh` | SessionStart (startup, resume, clear): registers the session (id, cwd, host), records it in `~/.config/agistry/state/`, starts the heartbeat, and tells the agent to join with the skill. |
 | `hooks/agistry-heartbeat.sh` | Background loop per session: re-sends the session's full identity each tick (so it survives a registry wipe), reports a lost `task:role` race to the agent, and deregisters when Claude exits. |
 | `hooks/agistry-deregister.sh` | SessionEnd: marks the session `gone`, stops the heartbeat. |
-| `skills/agistry/` | The skill and its CLI, `agistry.sh`: `join`, `who`, `send`, `inbox`, and [resource leases](../../README.md#resources--leases). It adds the token, so the agent never handles it. |
+| [`../shared/skill/agistry/`](../shared/skill/agistry/SKILL.md) | The skill and its CLI, `agistry.sh`, shared with the other agents: `join`, `who`, `send`, `inbox`, and [resource leases](../../README.md#resources--leases). It adds the token, so the agent never handles it. |
 | `channel/` | Optional [live-wake channel](channel/README.md). |
 | `statusline/` | Optional status line. |
 

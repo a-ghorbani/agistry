@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-CLI = Path(__file__).parent / "skills/agistry/agistry.sh"
+CLI = Path(__file__).parent / "skill/agistry/agistry.sh"
 
 
 class AgentKindTest(unittest.TestCase):

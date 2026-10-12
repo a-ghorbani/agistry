@@ -47,11 +47,11 @@ echo "  hooks  -> $CLAUDE_DIR/hooks/"
 
 # 2. skill
 mkdir -p "$CLAUDE_DIR/skills/agistry"
-# SKILL.md names the default profile's script path; point it at this profile's copy.
-sed "s|~/\.claude/skills/agistry|$CLAUDE_DIR_SHOWN/skills/agistry|g" "$HERE/skills/agistry/SKILL.md" \
+# SKILL.md names the shared ~/.agents path; point it at this profile's copy.
+sed "s|~/\.agents/skills/agistry|$CLAUDE_DIR_SHOWN/skills/agistry|g" "$HERE/../shared/skill/agistry/SKILL.md" \
   > "$CLAUDE_DIR/skills/agistry/SKILL.md"
 chmod 0644 "$CLAUDE_DIR/skills/agistry/SKILL.md"
-install -m 0755 "$HERE/skills/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
+install -m 0755 "$HERE/../shared/skill/agistry/agistry.sh" "$CLAUDE_DIR/skills/agistry/agistry.sh"
 echo "  skill  -> $CLAUDE_DIR/skills/agistry/"
 
 # 3. config. Shared by every profile, so only the keys given are replaced; the rest
