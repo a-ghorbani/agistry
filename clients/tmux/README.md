@@ -52,6 +52,8 @@ and `tmux-sidebar` in a narrow one beside it.
 | type | filter; press enter to jump |
 | ctrl-n | new session, shown in the main pane, in: the directory typed as the query (absolute, `~/…`, or relative to `~`); else the highlighted project (its header or any session under it, at the repo root); else `~` |
 | ctrl-r | refresh now |
+| esc | clear the query (it doesn't quit, so the sidebar isn't closed by accident) |
+| ctrl-c | quit the sidebar |
 
 The sidebar switches only on those keys, not whenever its cursor moves, so a
 refresh never pulls the main pane somewhere else.
@@ -66,7 +68,7 @@ Debug with `tmux-sidebar --list`, or `tmux list-panes -a -F '#{session_name} #{@
 
 | Piece | What it does |
 | --- | --- |
-| `tmux-main` | Attaches the "main" tmux client (kept alive when its session ends) and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Remembers the main session by id, since names change. |
+| `tmux-main` | Attaches the "main" tmux client (kept alive when its session ends) and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Starting it again detaches the previous main client, since the sidebar only drives the newest one. Remembers the main session by id, since names change. |
 | `tmux-sidebar` | fzf switcher for the `tmux-main` client. Sessions are grouped under a header per project (the git repo of the agent's pane, worktrees folded in, else its directory), with sessions that need you first within each. Per session: state glyph, **label**, the tmux name minus the project, and how long it has been waiting/done. While you type a query, the headers go and each row shows `project/name`. Refreshes every 2s from one `ps` + one `tmux` call (and a `git` call per directory). |
 | `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex hook event read from stdin. |
 | `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code and Codex need no adapter — their hooks call `agent-state` directly. |

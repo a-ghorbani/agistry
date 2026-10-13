@@ -7,6 +7,15 @@ if [[ -n "${TMUX:-}" ]]; then
 fi
 
 mkdir -p "$HOME/.cache"
+# One main client at a time: the sidebar only drives the newest, so an older one left
+# open in another terminal would sit there looking like it ignores the sidebar. Detach
+# it (its terminal goes back to the shell; the sessions stay).
+old_pid="$(cat "$HOME/.cache/tmux-main-pid" 2>/dev/null || true)"
+if [[ -n "$old_pid" ]]; then
+  old_tty="$(tmux list-clients -F '#{client_pid} #{client_tty}' 2>/dev/null \
+             | awk -v pid="$old_pid" '$1 == pid { print $2 }' || true)"
+  [[ -n "$old_tty" ]] && tmux detach-client -t "$old_tty" 2>/dev/null || true
+fi
 tty > "$HOME/.cache/tmux-main-tty"
 # exec keeps this PID, so the sidebar can find the client even if the tty file goes stale.
 echo $$ > "$HOME/.cache/tmux-main-pid"
