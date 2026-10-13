@@ -50,7 +50,7 @@ and `tmux-sidebar` in a narrow one beside it.
 | --- | --- |
 | ↑ ↓, ctrl-p/j/k, page keys, enter, click | show that session in the main pane |
 | type | filter; press enter to jump |
-| ctrl-n | new session in the directory typed as the query (absolute, `~/…`, or relative to `~`), else in `~`, shown in the main pane |
+| ctrl-n | new session, shown in the main pane, in: the directory typed as the query (absolute, `~/…`, or relative to `~`); else the highlighted project (its header or any session under it, at the repo root); else `~` |
 | ctrl-r | refresh now |
 
 The sidebar switches only on those keys, not whenever its cursor moves, so a
