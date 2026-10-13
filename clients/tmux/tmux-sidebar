@@ -9,7 +9,7 @@
 #
 # Keys: ↑↓ (ctrl-p/j/k, page keys, enter, click) switch the main client; ctrl-n opens a new session in the
 # directory typed as the query (absolute, ~/..., or relative to ~), else in the highlighted
-# project (its header or any session under it), else in ~.
+# project (its header or any session under it), else in ~. esc clears the query; ctrl-c quits.
 
 SELF="$(readlink -f "$0")"
 STATE_DIR="${AGISTRY_STATE_DIR:-$HOME/.config/agistry/state}"
@@ -231,4 +231,5 @@ list_sessions | fzf \
   --bind "load:reload-sync(sleep 2; '$SELF' --list {q})" \
   --bind "change:reload('$SELF' --list {q})" \
   --bind "ctrl-r:reload('$SELF' --list {q})" \
+  --bind "esc:clear-query" \
   --bind "ctrl-n:execute-silent('$SELF' --new {q} {1})+clear-query+reload('$SELF' --list)"
