@@ -53,6 +53,7 @@ reconcile() {
     # no role declared yet — keep the stub alive (re-creates it if the registry was wiped)
     body="$(jq -nc --arg s "$SID" --arg c "$cwd" --arg h "$host" '{session_id:$s,cwd:$c,host:$h,agent_kind:"claude"}')"
     curl -sf --max-time 3 -H "X-Registry-Token: $TOK" "$URL/register" -d "$body" >/dev/null 2>&1 || true
+    ping heartbeat   # /register keeps a 'gone' state (e.g. a resumed session); this revives it
   fi
 }
 

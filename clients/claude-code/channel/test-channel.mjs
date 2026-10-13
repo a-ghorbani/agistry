@@ -9,6 +9,7 @@
 //   env      no pointer file: the channel polls $CLAUDE_CODE_SESSION_ID
 //   pointer  by-pid/<this pid> names another session: the channel polls that one
 //   stale    the pointer's start time does not match: the channel ignores it
+//   exit-*   the channel exits when its stdin closes, or when its parent dies
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -110,10 +111,43 @@ function runCase(name, { pointer }) {
   });
 }
 
+// The channel must not outlive its session. `how` ends the session the two ways an
+// orphan happens: its stdio closes, or its parent dies while the pipes stay open.
+function exitCase(name, how) {
+  return new Promise((resolve) => {
+    const env = { ...process.env, CLAUDE_CODE_SESSION_ID: `chan-test-${name}-${process.pid}`, AGISTRY_CHANNEL_ACTIVE: '1', AGISTRY_CHANNEL_START_DELAY_MS: '0', AGISTRY_POLL_MS: '300' };
+    // 'parent': a shell parent that we SIGKILL; the channel keeps our pipes as stdio.
+    const child = how === 'stdin'
+      ? spawn('node', [channelPath], { env, stdio: ['pipe', 'pipe', 'inherit'] })
+      // (sh gives a background job /dev/null as stdin unless told to keep its own)
+      : spawn('sh', ['-c', `node '${channelPath}' 0<&0 & echo $!; wait`], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+    let pid = how === 'stdin' ? child.pid : 0;
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const end = () => (how === 'stdin' ? child.stdin.end() : child.kill('SIGKILL'));
+    child.stdout.once('data', (d) => {
+      if (!pid) pid = Number(String(d).trim());
+      setTimeout(() => {
+        const before = alive();
+        end();
+        setTimeout(() => {
+          const pass = before && !alive();
+          if (alive()) process.kill(pid, 'SIGKILL');
+          console.log(`[${name}]`, pass ? 'PASS' : 'FAIL', `(running before: ${before}, after: ${alive()})`);
+          resolve(pass);
+        }, 1500);
+      }, 500);
+    });
+    // The channel says nothing until asked, so give it something to answer.
+    if (how === 'stdin') child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' } } }) + '\n');
+  });
+}
+
 const results = [];
 results.push(await runCase('env', {}));
 results.push(await runCase('pointer', { pointer: 'match' }));
 results.push(await runCase('stale', { pointer: 'stale' }));
+results.push(await exitCase('exit-on-stdin-close', 'stdin'));
+results.push(await exitCase('exit-when-orphaned', 'parent'));
 const pass = results.every(Boolean);
 console.log('RESULT:', pass ? 'PASS' : 'FAIL');
 process.exit(pass ? 0 : 1);
