@@ -73,7 +73,7 @@ func TestUnassignedResumeRestoresLiveness(t *testing.T) {
 		t.Fatal("register alone unexpectedly revived a gone session")
 	}
 	do(t, "POST", "/heartbeat", `{"session_id":"unassigned"}`)
-	code, agents := do(t, "GET", "/agents", "")
+	code, agents := do(t, "GET", "/agents?agent_kind=unknown", "") // not the operator
 	if code != 200 || agents["count"].(float64) != 1 {
 		t.Fatalf("resumed session missing: %v", agents)
 	}

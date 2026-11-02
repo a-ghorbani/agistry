@@ -241,6 +241,7 @@
     <option value="claude">Claude Code</option>
     <option value="opencode">opencode</option>
     <option value="pi">pi</option>
+    <option value="human">Human</option>
     <option value="unknown">Unknown</option>
   </select>
   <input id="tok" type="password" placeholder="registry token" size="20">
@@ -440,7 +441,11 @@
     return out.join('');
   }
 
-  var agentKindNames = {codex:'Codex', claude:'Claude Code', opencode:'opencode', pi:'pi', unknown:'Unknown'};
+  var agentKindNames = {codex:'Codex', claude:'Claude Code', opencode:'opencode', pi:'pi', human:'Human', unknown:'Unknown'};
+  // an agent's role, or what to call it without one; the operator has no role, only its name
+  function roleName(a, none){
+    return a.role || (agentKindOf(a) === 'human' ? (a.session_id || a.id) : none);
+  }
   function agentKindOf(a){
     return a.agent_kind && a.agent_kind !== 'unknown' && agentKindNames[a.agent_kind] ? a.agent_kind : 'unknown';
   }
@@ -455,7 +460,7 @@
 
   function agentKindLabel(a){
     var kind = agentKindOf(a);
-    return '<span class="agent-label">' + (kind === 'unknown' ? '' :
+    return '<span class="agent-label">' + (kind === 'unknown' || kind === 'human' ? '' :
       '<svg class="agent-logo" aria-hidden="true"><use href="#logo-' + kind + '"/></svg>') +
       agentKindName(a) + '</span>';
   }
@@ -496,7 +501,7 @@
       var mc = messagesFor(x).length;
       rows.push('<tr class="member">' +
         '<td class="caret" data-sid="' + esc(x.session_id) + '"><span class="chev' + (open?' open':'') + '">›</span></td>' +
-        '<td class="role">' + esc(x.role || '—') + '</td>' +
+        '<td class="role">' + esc(roleName(x, '—')) + '</td>' +
         '<td class="agent-kind">' + agentKindLabel(x) + '</td>' +
         '<td><span class="state"><span class="dot ' + esc(x.state||'unassigned') + '"></span>' + esc(x.state) + '</span></td>' +
         '<td class="sid" title="' + esc(x.session_id) + '">' + esc((x.session_id||'').slice(0,8)) + '</td>' +
@@ -902,7 +907,7 @@
 
       // label (role or short sid) — hide for idle unless zoomed/hover
       if (!p.idle || hover===p || cam.scale > 1.4){
-        var label = p.role || (p.id||'').slice(0,6);
+        var label = roleName(p, (p.id||'').slice(0,6));
         ctx.save();
         ctx.globalAlpha = dim ? 0.3 : 0.92;
         ctx.fillStyle = '#cfd0d6';
@@ -1163,7 +1168,7 @@
 
   function agentHeadHtml(n){
     return '<span class="dot ' + esc(n.state) + '"></span>' +
-      '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>' +
+      '<span class="np-role">' + esc(roleName(n, 'unassigned')) + '</span>' +
       (n.task ? '<span class="badge">' + esc(n.task) + '</span>' : '') +
       '<span class="grow"></span>' +
       '<button class="np-wide" id="npWide" title="' + (panelWide ? 'collapse panel' : 'expand panel') + '">' +
@@ -1383,7 +1388,7 @@
     var ms = messagesFor(a).slice(0, 12);
     var h = ['<div class="np-head">',
       '<span class="dot ' + esc(n.state) + '"></span>',
-      '<span class="np-role">' + esc(n.role || 'unassigned') + '</span>',
+      '<span class="np-role">' + esc(roleName(n, 'unassigned')) + '</span>',
       '<button class="np-close" id="npClose">×</button></div>'];
     h.push('<dl class="np-grid">');
     h.push('<dt>agent</dt><dd>' + agentKindLabel(n) + '</dd>');

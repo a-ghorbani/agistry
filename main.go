@@ -72,6 +72,7 @@ func main() {
 	messageRetention = envInt("REGISTRY_MESSAGE_RETENTION_SECONDS", 2592000) // 30d: finished messages stay readable as conversation history
 	resourceTTL = envInt("REGISTRY_RESOURCE_TTL_SECONDS", 900)               // provider silence before a resource is presumed gone
 	leaseMaxHold = envInt("REGISTRY_LEASE_MAX_HOLD_SECONDS", 3600)
+	operatorID = env("REGISTRY_OPERATOR", operatorID)
 
 	var err error
 	db, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
@@ -194,7 +195,10 @@ CREATE TABLE IF NOT EXISTS leases (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active ON leases(resource_id) WHERE released_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_lease_history ON leases(resource_id, released_at);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureOperator(now())
 }
 
 // ---- middleware + helpers ----
@@ -278,6 +282,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id required")
 		return
 	}
+	if reservedSession(w, in.SessionID) {
+		return
+	}
 	if !validAgentKind(in.AgentKind) {
 		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
 		return
@@ -318,6 +325,9 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.SessionID == "" || in.Role == "" {
 		bad(w, "session_id and role required")
+		return
+	}
+	if reservedSession(w, in.SessionID) {
 		return
 	}
 	if in.Task != "" && !validTaskTag(in.Task) {
@@ -387,6 +397,9 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id required")
 		return
 	}
+	if reservedSession(w, in.SessionID) {
+		return
+	}
 	if !validAgentKind(in.AgentKind) {
 		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
 		return
@@ -422,6 +435,9 @@ func handleDeregister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(w, r, &in); err != nil || in.SessionID == "" {
 		bad(w, "session_id required")
+		return
+	}
+	if reservedSession(w, in.SessionID) {
 		return
 	}
 	if _, err := db.Exec(`UPDATE agents SET state='gone', last_seen=? WHERE session_id=?`, now(), in.SessionID); err != nil {
@@ -757,6 +773,9 @@ FROM m ORDER BY id DESC LIMIT ?`, limit)
 func reapOnce(t int64) {
 	if _, err := db.Exec(`UPDATE agents SET state='gone' WHERE state!='gone' AND last_seen < ?`, t-ttl); err != nil {
 		log.Printf("reaper agents: %v", err)
+	}
+	if err := ensureOperator(t); err != nil { // the human is never reaped
+		log.Printf("reaper operator: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE messages SET dead_lettered_at=? WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND created_at < ?`, t, t-pendingTTL); err != nil {
 		log.Printf("reaper dead-letter: %v", err)
