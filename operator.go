@@ -11,6 +11,10 @@ import "net/http"
 // operatorID is the operator's session id, REGISTRY_OPERATOR to rename it.
 var operatorID = "operator"
 
+// operatorNotify is called when a message to the operator is queued. The Slack relay
+// hooks it to wake its worker; it must never block.
+var operatorNotify = func() {}
+
 // ensureOperator (re)asserts the operator's row: live, kind human, no task or role.
 // Run at start and on every reaper pass, so nothing can leave it gone.
 func ensureOperator(t int64) error {

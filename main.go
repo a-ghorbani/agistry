@@ -91,6 +91,7 @@ func main() {
 	}
 
 	go reaper()
+	startSlack()
 
 	if token == "" {
 		log.Println("WARNING: REGISTRY_TOKEN unset — auth disabled (dev only)")
@@ -194,6 +195,16 @@ CREATE TABLE IF NOT EXISTS leases (
 -- a racy check-then-act, exactly as idx_agents_taskrole does for (task,role).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active ON leases(resource_id) WHERE released_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_lease_history ON leases(resource_id, released_at);
+-- The Slack relay's threads for messages to the operator: one per sender task, or per
+-- sender session when it has no task. A human's reply in a thread goes to reply_to.
+CREATE TABLE IF NOT EXISTS operator_threads (
+  channel   TEXT NOT NULL,
+  key       TEXT NOT NULL,
+  thread_ts TEXT NOT NULL,
+  reply_to  TEXT NOT NULL DEFAULT '',  -- task:role, or a session id when that is all there is
+  PRIMARY KEY (channel, key)
+);
+CREATE INDEX IF NOT EXISTS idx_operator_threads_ts ON operator_threads(channel, thread_ts);
 `)
 	if err != nil {
 		return err
@@ -620,6 +631,9 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if toSession == operatorID {
+		operatorNotify()
 	}
 	ok(w, map[string]any{"status": "queued", "msg_id": in.MsgID})
 }
