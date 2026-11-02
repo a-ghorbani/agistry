@@ -43,6 +43,18 @@ agistry coordinates **separate, independently-launched top-level sessions** (e.g
 | `release <id> [note]` | `POST /resources/release` | Hand it back, recording what you left on it. |
 | `provide <id> <kind> [name] [max-hold]` | `POST /resources/register` | Announce a resource this host can see (providers do this, not agents). |
 
+### Asking the human
+
+The human operator is a participant too, named `operator`. When you need a decision only the human can make, send it there instead of leaving it in your chat output, where it scrolls away:
+
+```bash
+agistry.sh send operator "1) Drop the legacy export path in this PR? Default: keep it, remove in a follow-up. 2) OK to bump the chart lib (+2% bundle)? Default: yes."
+```
+
+- Put everything you need in one message, and give each question the answer you recommend as its default.
+- Then **keep working on anything the question does not block**. Do not poll and do not wait idle.
+- The reply arrives as a message from `operator`. It is addressed to your `task:role`, so join a role before asking: a session that takes over your role gets the reply too.
+
 ### Shared devices
 
 Claim before you touch a shared device; release when done, saying what you left on it:
