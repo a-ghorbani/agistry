@@ -12,7 +12,7 @@ collisions. One Go binary, SQLite, and a built-in dashboard.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](go.mod)
 
-[Quick start](#run) · [Connect your agents](#connect-your-agents) · [Resources & leases](#resources--leases) · [API](#api)
+[Quick start](#run) · [Connect your agents](#connect-your-agents) · [Resources & leases](#resources--leases) · [The operator](#the-operator) · [Slack](#slack) · [API](#api)
 
 </div>
 
@@ -27,6 +27,8 @@ collisions. One Go binary, SQLite, and a built-in dashboard.
   supported agent.
 - **Leases**: agents claim shared devices (Android phones, iPhones, GPUs) for a
   bounded time; a holder that dies releases them automatically.
+- **The operator**: the human is a participant agents can message (`send operator`),
+  answered from Slack.
 - **Dashboard**: a live graph or table of agents by host, their conversations, and
   who holds which device.
 - **Small and self-healing**: single binary, SQLite in WAL mode, and liveness by
@@ -80,6 +82,8 @@ REGISTRY_TOKEN=dev ./agistry
 | `REGISTRY_RESOURCE_TTL_SECONDS` | `900` | Provider silence before a resource is presumed `gone` |
 | `REGISTRY_LEASE_MAX_HOLD_SECONDS` | `3600` | Fallback cap on a single hold, when a resource sets none |
 | `REGISTRY_RESOURCES_FILE` | _(unset)_ | Optional JSON file seeding resources that have no provider to announce them |
+| `REGISTRY_OPERATOR` | `operator` | The [operator](#the-operator)'s name, i.e. what agents `send` to |
+| `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_CHANNEL` | _(unset = Slack off)_ | The optional [Slack relay](#slack); all three or none |
 | `AGISTRY_WEB_DIR` | _(unset = embedded)_ | Dev: serve `web/index.html` from this dir instead of the embedded copy (edit + refresh, no rebuild) |
 
 ## Deploy (systemd)
@@ -124,6 +128,8 @@ token once.
   compared in constant time.
 - **Bind to a private interface** and firewall it. agistry is built for a trusted
   LAN — do not expose it to the internet.
+- The Slack tokens live only in the server's environment. Anyone who can post in the
+  Slack channel speaks as the operator, so use a private channel.
 - The web dashboard *shell* is unauthenticated (it holds no secrets); the `/agents`,
   `/messages`, and `/resources` data it fetches is token-protected.
 
@@ -176,6 +182,88 @@ agistry.sh release adb:R5CT21 "left sha256:deadbeef resident"
 agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
 ```
 
+## The operator
+
+Agents need decisions only the human can make, and a question left in a chat scrolls
+away. So the human is a participant too: `operator`, an agent row that is always
+present (kind `human`), never ages out, and cannot be taken by a session. Agents ask
+with the ordinary `send`:
+
+```bash
+agistry.sh send operator "Drop the legacy export path in this PR? Default: keep it, remove in a follow-up."
+```
+
+The message waits in the operator's mailbox like any other. With [Slack](#slack)
+configured it is delivered to a Slack channel and the human replies there; without it,
+it stays pending and shows in the dashboard's conversation view. The reply comes back
+as a message from `operator` to the sender's `task:role`, so if the sender has died,
+the session that took over its role gets it.
+
+## Slack
+
+Optional. With `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` and `SLACK_CHANNEL` set, Slack is
+the operator's delivery path. It uses **Socket Mode**, so agistry needs no public URL:
+it opens an outbound websocket.
+
+- **One thread per sender task** (per session, for a sender without a task). The first
+  message starts the thread with a header naming the sender's `task:role`; each message
+  is posted in it, and also shown in the channel.
+- **Delivered means Slack has it.** A message is marked delivered only after Slack
+  accepts the post. If Slack is down, messages stay pending in the mailbox and are
+  retried with backoff, in order.
+- **Reply in the thread.** A reply goes, verbatim, from `operator` to the thread's
+  latest sender (its `task:role`, or its session id if it had no role). Top-level
+  messages, bots and edits are ignored.
+
+### Setup
+
+1. At [api.slack.com/apps](https://api.slack.com/apps) choose **Create New App → From
+   a manifest**, pick the workspace, and paste:
+
+   ```yaml
+   display_information:
+     name: agistry
+     description: Messages from your coding agents
+   features:
+     bot_user:
+       display_name: agistry
+       always_online: true
+   oauth_config:
+     scopes:
+       bot:
+         - chat:write        # post agents' messages
+         - channels:history  # read thread replies in a public channel
+         - groups:history    # ... and in a private one
+   settings:
+     event_subscriptions:
+       bot_events:
+         - message.channels
+         - message.groups
+     socket_mode_enabled: true
+     org_deploy_enabled: false
+     token_rotation_enabled: false
+   ```
+
+2. **App token** (`xapp-…`): *Basic Information → App-Level Tokens → Generate Token
+   and Scopes*, add the `connections:write` scope, and copy the token.
+3. **Bot token** (`xoxb-…`): *Install App → Install to Workspace*, then copy the *Bot
+   User OAuth Token*.
+4. **Channel**: create a channel (a private one is better: anyone in it speaks as the
+   operator), run `/invite @agistry` in it, and copy its **channel ID** (`C…`, at the
+   bottom of the channel's *About* tab). Use the ID, not the name.
+5. Put the three in the server's environment file — the systemd unit's
+   `EnvironmentFile` (`agistry.env`, which `.gitignore` keeps out of git), never in the
+   repo — then restart the service:
+
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-...
+   SLACK_APP_TOKEN=xapp-...
+   SLACK_CHANNEL=C0123456789
+   ```
+
+   The log says `Slack relay on`. Messages already waiting for the operator are
+   delivered on start.
+
 ## Delivery model
 
 - The **mailbox is the source of truth** — durable, survives the target being offline.
@@ -183,7 +271,7 @@ agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
   someone joins that role. A `/send` to a *session id* that matches no live agent is
   rejected as a likely typo.
 - **Atomic drain:** `/inbox` selects and marks-delivered in a single statement.
-- Three ways a message reaches an agent:
+- Ways a message reaches its recipient:
   - **Claude Code live channel** — polls `/inbox?peek=1`, pushes each message into the
     running session, and `/ack`s only what it delivered. See
     [the channel](clients/claude-code/channel/README.md).
@@ -192,6 +280,8 @@ agistry.sh send POC-94:e2e "need adb:R5CT21 for a benchmark — done with it?"
   - **opencode and pi plugins** — run inside the agent and pass each message to the
     session (`session.promptAsync`, `pi.sendMessage`), which starts a turn when idle or
     queues it behind the current one.
+  - **Slack relay** — delivers the [operator](#the-operator)'s mail to Slack and
+    marks it delivered once Slack accepts it. See [Slack](#slack).
   - **Manual poll** (`agistry.sh inbox`) — the agent drains its mailbox on demand;
     consume-on-read.
 
@@ -234,7 +324,8 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
 
-`agent_kind` accepts `codex`, `claude`, `opencode`, `pi`, or `unknown`. Omit it to preserve an
+`agent_kind` accepts `codex`, `claude`, `opencode`, `pi`, or `unknown`; `human` is
+the operator's, set by the server. Omit it to preserve an
 existing value; new sessions from older clients default to `unknown`. Client
 hooks and reconcilers report their own kind. The shared CLI accepts
 `who [task] [role] --kind codex` (also `claude`, `opencode`, `pi` or `unknown`).
@@ -262,6 +353,9 @@ State is disposable: agents reconcile their identity on every heartbeat, livenes
 self-heals via TTL, and finished messages expire after the retention period. To ship a schema change: **stop the
 service → delete the `registry.db*` files → restart**; clients re-register within one
 heartbeat. Preserve pending messages with a one-off SQLite dump/reshape/load if needed.
+
+A change that only adds tables needs no cutover: `CREATE TABLE IF NOT EXISTS` adds them
+to an existing database on start. The Slack relay's `operator_threads` arrived that way.
 
 ## License
 

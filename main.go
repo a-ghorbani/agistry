@@ -72,6 +72,7 @@ func main() {
 	messageRetention = envInt("REGISTRY_MESSAGE_RETENTION_SECONDS", 2592000) // 30d: finished messages stay readable as conversation history
 	resourceTTL = envInt("REGISTRY_RESOURCE_TTL_SECONDS", 900)               // provider silence before a resource is presumed gone
 	leaseMaxHold = envInt("REGISTRY_LEASE_MAX_HOLD_SECONDS", 3600)
+	operatorID = env("REGISTRY_OPERATOR", operatorID)
 
 	var err error
 	db, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
@@ -90,6 +91,7 @@ func main() {
 	}
 
 	go reaper()
+	startSlack()
 
 	if token == "" {
 		log.Println("WARNING: REGISTRY_TOKEN unset — auth disabled (dev only)")
@@ -193,8 +195,21 @@ CREATE TABLE IF NOT EXISTS leases (
 -- a racy check-then-act, exactly as idx_agents_taskrole does for (task,role).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active ON leases(resource_id) WHERE released_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_lease_history ON leases(resource_id, released_at);
+-- The Slack relay's threads for messages to the operator: one per sender task, or per
+-- sender session when it has no task. A human's reply in a thread goes to reply_to.
+CREATE TABLE IF NOT EXISTS operator_threads (
+  channel   TEXT NOT NULL,
+  key       TEXT NOT NULL,
+  thread_ts TEXT NOT NULL,
+  reply_to  TEXT NOT NULL DEFAULT '',  -- task:role, or a session id when that is all there is
+  PRIMARY KEY (channel, key)
+);
+CREATE INDEX IF NOT EXISTS idx_operator_threads_ts ON operator_threads(channel, thread_ts);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureOperator(now())
 }
 
 // ---- middleware + helpers ----
@@ -278,6 +293,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id required")
 		return
 	}
+	if reservedSession(w, in.SessionID) {
+		return
+	}
 	if !validAgentKind(in.AgentKind) {
 		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
 		return
@@ -318,6 +336,9 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.SessionID == "" || in.Role == "" {
 		bad(w, "session_id and role required")
+		return
+	}
+	if reservedSession(w, in.SessionID) {
 		return
 	}
 	if in.Task != "" && !validTaskTag(in.Task) {
@@ -387,6 +408,9 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		bad(w, "session_id required")
 		return
 	}
+	if reservedSession(w, in.SessionID) {
+		return
+	}
 	if !validAgentKind(in.AgentKind) {
 		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
 		return
@@ -422,6 +446,9 @@ func handleDeregister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(w, r, &in); err != nil || in.SessionID == "" {
 		bad(w, "session_id required")
+		return
+	}
+	if reservedSession(w, in.SessionID) {
 		return
 	}
 	if _, err := db.Exec(`UPDATE agents SET state='gone', last_seen=? WHERE session_id=?`, now(), in.SessionID); err != nil {
@@ -605,6 +632,9 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		fail(w, err)
 		return
 	}
+	if toSession == operatorID {
+		operatorNotify()
+	}
 	ok(w, map[string]any{"status": "queued", "msg_id": in.MsgID})
 }
 
@@ -757,6 +787,9 @@ FROM m ORDER BY id DESC LIMIT ?`, limit)
 func reapOnce(t int64) {
 	if _, err := db.Exec(`UPDATE agents SET state='gone' WHERE state!='gone' AND last_seen < ?`, t-ttl); err != nil {
 		log.Printf("reaper agents: %v", err)
+	}
+	if err := ensureOperator(t); err != nil { // the human is never reaped
+		log.Printf("reaper operator: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE messages SET dead_lettered_at=? WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND created_at < ?`, t, t-pendingTTL); err != nil {
 		log.Printf("reaper dead-letter: %v", err)
