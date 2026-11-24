@@ -135,13 +135,12 @@ func retryAfter(h string) time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-// post sends a message, threaded under threadTS when given and then also shown in the
-// channel, so a new message in an old thread is not missed.
+// post sends a message, threaded under threadTS when given. Thread replies stay in the
+// thread (no reply_broadcast), so the channel only shows each thread's header.
 func (s *slackRelay) post(threadTS, text string) (string, error) {
 	msg := map[string]any{"channel": s.channel, "text": text, "unfurl_links": false}
 	if threadTS != "" {
 		msg["thread_ts"] = threadTS
-		msg["reply_broadcast"] = true
 	}
 	var out struct {
 		TS string `json:"ts"`

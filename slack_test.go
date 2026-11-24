@@ -116,7 +116,7 @@ func pendingToOperator(t *testing.T) int {
 }
 
 // One thread per sender task, started by a header naming the sender; each message is
-// posted in it (and shown in the channel), then acked.
+// posted in it (and only in it), then acked.
 func TestSlackDeliversOperatorMailIntoTaskThreads(t *testing.T) {
 	setup(t)
 	f, s := newFakeSlack(t)
@@ -135,7 +135,7 @@ func TestSlackDeliversOperatorMailIntoTaskThreads(t *testing.T) {
 	if c[0].Body["thread_ts"] != nil || !strings.Contains(text(c[0]), "T:impl") || c[0].Auth != "Bearer xoxb-test" {
 		t.Fatalf("first post should be a header naming the sender, with the bot token: %v", c[0])
 	}
-	if c[1].Body["thread_ts"] != "100.1" || c[1].Body["reply_broadcast"] != true || c[1].Body["channel"] != "C1" ||
+	if c[1].Body["thread_ts"] != "100.1" || c[1].Body["reply_broadcast"] != nil || c[1].Body["channel"] != "C1" ||
 		!strings.Contains(text(c[1]), "Drop &lt;legacy&gt; path? default: keep it") || !strings.Contains(text(c[1]), "T:impl") {
 		t.Fatalf("message should be posted, escaped, in the task thread: %v", c[1].Body)
 	}
