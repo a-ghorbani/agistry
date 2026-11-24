@@ -297,7 +297,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validAgentKind(in.AgentKind) {
-		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
+		bad(w, "agent_kind must be codex, claude, opencode, pi, mastracode, or unknown")
 		return
 	}
 	t := now()
@@ -369,7 +369,7 @@ func handleAssign(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !validAgentKind(in.AgentKind) {
-		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
+		bad(w, "agent_kind must be codex, claude, opencode, pi, mastracode, or unknown")
 		return
 	}
 	t := now()
@@ -412,7 +412,7 @@ func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validAgentKind(in.AgentKind) {
-		bad(w, "agent_kind must be codex, claude, opencode, pi, or unknown")
+		bad(w, "agent_kind must be codex, claude, opencode, pi, mastracode, or unknown")
 		return
 	}
 	t := now()
@@ -461,7 +461,7 @@ func handleDeregister(w http.ResponseWriter, r *http.Request) {
 // An omitted kind preserves existing metadata; old clients default to unknown.
 func validAgentKind(kind string) bool {
 	switch kind {
-	case "", "unknown", "codex", "claude", "opencode", "pi":
+	case "", "unknown", "codex", "claude", "opencode", "pi", "mastracode":
 		return true
 	}
 	return false

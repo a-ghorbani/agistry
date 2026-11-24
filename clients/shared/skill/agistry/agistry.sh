@@ -115,11 +115,11 @@ case "$cmd" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --kind)
-          [ $# -ge 2 ] || { echo "--kind requires codex, claude, opencode, pi, or unknown" >&2; exit 1; }
-          case "$2" in codex|claude|opencode|pi|unknown) params+=("agent_kind=$2") ;; *) echo "invalid agent kind: $2" >&2; exit 1 ;; esac
+          [ $# -ge 2 ] || { echo "--kind requires codex, claude, opencode, pi, mastracode, or unknown" >&2; exit 1; }
+          case "$2" in codex|claude|opencode|pi|mastracode|unknown) params+=("agent_kind=$2") ;; *) echo "invalid agent kind: $2" >&2; exit 1 ;; esac
           shift 2 ;;
         *)
-          case "$position" in 0) params+=("task=$1") ;; 1) params+=("role=$1") ;; *) echo "usage: who [task] [role] [--kind codex|claude|opencode|pi|unknown]" >&2; exit 1 ;; esac
+          case "$position" in 0) params+=("task=$1") ;; 1) params+=("role=$1") ;; *) echo "usage: who [task] [role] [--kind codex|claude|opencode|pi|mastracode|unknown]" >&2; exit 1 ;; esac
           position=$((position+1)); shift ;;
       esac
     done

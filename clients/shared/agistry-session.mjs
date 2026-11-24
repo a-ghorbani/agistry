@@ -1,5 +1,5 @@
 // Shared agistry client for agents whose plugins run inside the agent's own process
-// (opencode plugins, pi extensions). It does for one session what the Claude Code
+// (opencode plugins, pi extensions, Mastra Code plugins). It does for one session what the Claude Code
 // hooks + heartbeat daemon + channel, or the Codex bridge, do:
 //
 //   start()   register the session, record it locally, then keep it alive:
@@ -79,7 +79,7 @@ function processStart(pid) {
 
 /**
  * @param {object} o
- * @param {"opencode"|"pi"} o.kind
+ * @param {"opencode"|"pi"|"mastracode"} o.kind
  * @param {string} o.sessionId
  * @param {string} [o.cwd]
  * @param {(text: string, message: object) => Promise<boolean>} o.deliver  true = delivered

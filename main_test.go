@@ -352,7 +352,7 @@ func TestAgentKindLifecycle(t *testing.T) {
 	if m["count"] != float64(1) || m["agents"].([]any)[0].(map[string]any)["state"] != "active" {
 		t.Fatalf("heartbeat did not restore liveness and kind: %v", m)
 	}
-	for _, kind := range []string{"opencode", "pi"} {
+	for _, kind := range []string{"opencode", "pi", "mastracode"} {
 		if code, m := do(t, "POST", "/register", `{"session_id":"kind-`+kind+`","agent_kind":"`+kind+`"}`); code != 200 {
 			t.Fatalf("%s rejected: %d %v", kind, code, m)
 		}
