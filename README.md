@@ -5,7 +5,8 @@
 **A registry, mailbox and device-lease service for coordinating AI coding agents.**
 
 See which [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/),
-[opencode](https://opencode.ai) and [pi](https://github.com/earendil-works/pi) sessions
+[opencode](https://opencode.ai), [pi](https://github.com/earendil-works/pi) and
+[Mastra Code](https://code.mastra.ai) sessions
 are working on what, hand off work between them, and share devices without
 collisions. One Go binary, SQLite, and a built-in dashboard.
 
@@ -115,6 +116,7 @@ appears in the dashboard.
 | Codex | `bash clients/codex/install.sh --url http://HOST:7070 --token TOKEN`, then trust the hooks with `/hooks` in Codex | [clients/codex](clients/codex/README.md) |
 | opencode | `clients/opencode/install.sh --url http://HOST:7070 --token TOKEN` | [clients/opencode](clients/opencode/README.md) |
 | pi | `clients/pi/install.sh --url http://HOST:7070 --token TOKEN` | [clients/pi](clients/pi/README.md) |
+| Mastra Code | `clients/mastracode/install.sh --url http://HOST:7070 --token TOKEN` | [clients/mastracode](clients/mastracode/README.md) |
 | Devices (phones) | Set `AGISTRY_PROVIDERS` in `client.env`, then `clients/providers/install.sh` (every client installer also runs it) | [clients/providers](clients/providers/README.md) |
 | tmux sidebar | `clients/tmux/install.sh` (optional) | [clients/tmux](clients/tmux/README.md) |
 
@@ -150,7 +152,7 @@ the collision still happens and now nothing detects it.
   when the holder's session goes `gone` — and the second is why this lives in the
   registry rather than a lock file: only agistry knows the holder died. *Alive holder →
   held; dead holder → free.* The clients heartbeat independently of agent activity
-  (the Claude Code heartbeat daemon, the Codex bridge, the opencode and pi plugins),
+  (the Claude Code heartbeat daemon, the Codex bridge, the opencode, pi and Mastra Code plugins),
   so a lane blocked in a three-hour test still holds its phone.
 - **A cap, so a live-but-idle holder cannot sit on a device forever.** Per resource via
   `max_hold_seconds` (set it to ~6h for phones running full e2e suites), falling back to
@@ -277,9 +279,10 @@ it opens an outbound websocket.
     [the channel](clients/claude-code/channel/README.md).
   - **Codex bridge** — peeks the same way and hands each message to `codex queue` as a
     follow-up, `/ack`ing once Codex accepts it. See [the Codex client](clients/codex/README.md).
-  - **opencode and pi plugins** — run inside the agent and pass each message to the
-    session (`session.promptAsync`, `pi.sendMessage`), which starts a turn when idle or
-    queues it behind the current one.
+  - **opencode, pi and Mastra Code plugins** — run inside the agent and pass each
+    message to the session (`session.promptAsync`, `pi.sendMessage`, a Mastra Code
+    notification signal), which starts a turn when idle or queues it behind the
+    current one.
   - **Slack relay** — delivers the [operator](#the-operator)'s mail to Slack and
     marks it delivered once Slack accepts it. See [Slack](#slack).
   - **Manual poll** (`agistry.sh inbox`) — the agent drains its mailbox on demand;
@@ -324,11 +327,11 @@ All POST bodies are JSON (≤ 1 MiB). Auth header required when `REGISTRY_TOKEN`
 | GET | `/` or `/ui` | — | Web dashboard. |
 | GET | `/healthz` | — | Liveness probe. |
 
-`agent_kind` accepts `codex`, `claude`, `opencode`, `pi`, or `unknown`; `human` is
+`agent_kind` accepts `codex`, `claude`, `opencode`, `pi`, `mastracode`, or `unknown`; `human` is
 the operator's, set by the server. Omit it to preserve an
 existing value; new sessions from older clients default to `unknown`. Client
 hooks and reconcilers report their own kind. The shared CLI accepts
-`who [task] [role] --kind codex` (also `claude`, `opencode`, `pi` or `unknown`).
+`who [task] [role] --kind codex` (also `claude`, `opencode`, `pi`, `mastracode` or `unknown`).
 
 The `agent_kind` column changes the database schema. Follow the clean-cutover
 policy below when upgrading an existing registry; rebuilding the binary alone

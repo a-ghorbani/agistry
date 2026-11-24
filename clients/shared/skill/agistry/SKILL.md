@@ -31,7 +31,7 @@ agistry coordinates **separate, independently-launched top-level sessions** (e.g
 | Command | Endpoint | What it does |
 | --- | --- | --- |
 | `join <role> [task-tag] [--force]` | `POST /assign` | Declare THIS session's role (e.g. implementer, reviewer, researcher) and its `task-tag`. Pass `--force` only to deliberately change an identity you already declared. |
-| `who [task] [role] [--kind codex|claude|opencode|pi|unknown]` | `GET /agents` | List agents (the party). Filter by task, role, or agent kind. Each entry reports `agent_kind`; older clients appear as `unknown`. |
+| `who [task] [role] [--kind codex|claude|opencode|pi|mastracode|unknown]` | `GET /agents` | List agents (the party). Filter by task, role, or agent kind. Each entry reports `agent_kind`; older clients appear as `unknown`. |
 | `send <to> <msg>` | `POST /send` | Message another agent. `to` = a `session_id` (full, or a unique short prefix like `8edb7472`) or `TASK:role` (e.g. `POC-31:implementer`). A bare role name does NOT work — use `TASK:role`. Durable — waits in their mailbox. |
 | `inbox` | `GET /inbox` | Drain messages addressed to YOU (this session / your task:role). |
 | `heartbeat` | `POST /heartbeat` | Mark yourself still alive (the registry ages out silent agents). |
@@ -111,6 +111,6 @@ Keep `role` and `task-tag` short (single tokens or ids). Status updates, results
 
 Messages are durable and support **late binding**: a `send` to a `TASK:role` that no one has joined yet waits in the mailbox until someone joins that role, so you can hand off before the recipient exists. A pending message that is never claimed is eventually dead-lettered (surfaced as undelivered, not silently dropped) rather than waiting forever. A `send` to a **session id** that matches no live agent is rejected as a likely typo, so prefer `TASK:role` when the recipient may not be online yet.
 
-There is no guaranteed instant delivery: a recipient sees a message when it next polls `inbox`, or sooner if its agent pushes messages in: Claude Code with the live channel, or the Codex, opencode and pi clients, which deliver after the current turn (or start one if the agent is idle). Delivered means handed to the agent, not acted on.
+There is no guaranteed instant delivery: a recipient sees a message when it next polls `inbox`, or sooner if its agent pushes messages in: Claude Code with the live channel, or the Codex, opencode, pi and Mastra Code clients, which deliver after the current turn (or start one if the agent is idle). Delivered means handed to the agent, not acted on.
 
 If `agistry.sh` reports no session id, prefix every command with `AGISTRY_SESSION_ID=<id>`, using the session id you were given at session start. Never guess or reuse another session's id.
