@@ -209,7 +209,7 @@ it opens an outbound websocket.
 
 - **One thread per sender task** (per session, for a sender without a task). The first
   message starts the thread with a header naming the sender's `task:role`; each message
-  is posted in it, and also shown in the channel.
+  is posted in it, and only in it: the channel shows one header per thread.
 - **Delivered means Slack has it.** A message is marked delivered only after Slack
   accepts the post. If Slack is down, messages stay pending in the mailbox and are
   retried with backoff, in order.

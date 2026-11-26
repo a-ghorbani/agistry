@@ -15,3 +15,8 @@ __pycache__/
 
 # local systemd unit (deploy/agistry.service is the template to copy + edit)
 /agistry.service
+
+# macOS Finder metadata, and local scratch
+.DS_Store
+._*
+/temp/
