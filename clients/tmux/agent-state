@@ -5,10 +5,10 @@
 # across reboots; the sidebar also ignores a state once the pane is back at a shell.
 #
 # Usage:
-#   agent-state KIND STATE   KIND: claude|codex|opencode|pi|...
+#   agent-state KIND STATE   KIND: claude|codex|opencode|pi|mastracode|...
 #                            STATE: working|waiting|done|idle|off
-#   agent-state KIND         read a Claude Code / Codex hook event from stdin and
-#                            derive STATE from it (both share the same event names)
+#   agent-state KIND         read a Claude Code / Codex / Mastra Code hook event from
+#                            stdin and derive STATE from it (they share event names)
 #
 # Sets on $TMUX_PANE: @agent_kind, @agent_state, @agent_since (epoch of last change).
 # Always exits 0 and prints nothing: Codex treats plain stdout on Stop as invalid.
@@ -37,10 +37,10 @@ if [ -z "$state" ]; then
   fi
   case "${event:-}" in
     SessionStart)               state=idle ;;
-    UserPromptSubmit|PostToolUse) state=working ;;
+    UserPromptSubmit|PostToolUse|AgentStart|PermissionResult) state=working ;;
     PreToolUse)
       # A question tool blocks on the user just like a permission prompt does.
-      case "${tool:-}" in AskUserQuestion|request_user_input) state=waiting ;; *) state=working ;; esac ;;
+      case "${tool:-}" in AskUserQuestion|request_user_input|ask_user) state=waiting ;; *) state=working ;; esac ;;
     PermissionRequest)          state=waiting ;;
     Notification)
       case "${ntype:-}" in
