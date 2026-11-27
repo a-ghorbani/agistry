@@ -1,7 +1,7 @@
 # agistry × tmux
 
 A tmux session switcher that tells you what each session is *about* and whether
-its agent needs you — for hosts running many Claude Code, Codex, opencode and pi
+its agent needs you — for hosts running many Claude Code, Codex, opencode, pi and Mastra Code
 sessions whose tmux names (`proj-myrepo-claude-2`) say nothing.
 
 ```
@@ -24,18 +24,18 @@ That one command covers everything on this host:
 - links `tmux-main`, `tmux-sidebar` and `agent-state` into `~/bin` (an existing real
   file there is kept as `<name>.bak.<timestamp>`);
 - wires hooks for each agent it finds: `~/.claude` and every `~/.claude-*/` profile,
-  `~/.codex`, `~/.config/opencode`, `~/.pi/agent`. Agents that aren't installed are
+  `~/.codex`, `~/.config/opencode`, `~/.pi/agent`, `~/.mastracode`. Agents that aren't installed are
   skipped; re-run after installing one.
 
 What it can't do for you:
 
 - **Codex** skips new hooks until trusted: run `/hooks` once in a Codex session.
-- **Restart** running Codex, opencode and pi sessions to load the hooks. Claude Code
+- **Restart** running Codex, opencode, pi and Mastra Code sessions to load the hooks. Claude Code
   picks them up live.
 - **Prerequisites:** tmux 3.0+, fzf, jq. The installer warns if fzf or tmux is missing.
 - **agistry labels** need that agent's agistry client
   ([Claude Code](../claude-code/README.md), [opencode](../opencode/README.md),
-  [pi](../pi/README.md)), which writes the state files the sidebar reads. Without it,
+  [pi](../pi/README.md), [Mastra Code](../mastracode/README.md)), which writes the state files the sidebar reads. Without it,
   sessions fall back to their pane title.
 
 `clients/tmux/install.sh --uninstall` removes the hooks and `agent-state`; the
@@ -69,9 +69,9 @@ Debug with `tmux-sidebar --list`, or `tmux list-panes -a -F '#{session_name} #{@
 | Piece | What it does |
 | --- | --- |
 | `tmux-main` | Attaches the "main" tmux client (kept alive when its session ends) and records its pid/tty in `~/.cache`, so the sidebar knows which client to switch. Starting it again detaches the previous main client, since the sidebar only drives the newest one. Remembers the main session by id, since names change. |
-| `tmux-sidebar` | fzf switcher for the `tmux-main` client. Sessions are grouped under a header per project (the git repo of the agent's pane, worktrees folded in, else its directory), with sessions that need you first within each. Per session: state glyph, **label**, the tmux name minus the project, and how long it has been waiting/done. While you type a query, the headers go and each row shows `project/name`. Refreshes every 2s from one `ps` + one `tmux` call (and a `git` call per directory). |
-| `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex hook event read from stdin. |
-| `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code and Codex need no adapter — their hooks call `agent-state` directly. |
+| `tmux-sidebar` | fzf switcher for the `tmux-main` client. Sessions are grouped under a header per project (the git repo of the agent's pane, worktrees folded in, else its directory), with sessions that need you first within each. Per session: state glyph, **label**, the tmux name minus the project, and how long it has been waiting/done. A session running agents in more than one window (an orchestrator that opened its workers with `new-window`) is listed one row per window, `session/window`, so each agent can be selected. While you type a query, the headers go and each row shows `project/name`. Refreshes every 2s from one `ps` + one `tmux` call (and a `git` call per directory). |
+| `agent-state` | Writes `@agent_kind`, `@agent_state` (`working`/`waiting`/`done`/`idle`) and `@agent_since` on the agent's own pane (`$TMUX_PANE`). Called by every agent's hooks; with no state argument it maps a Claude/Codex/Mastra Code hook event read from stdin. |
+| `adapters/` | opencode plugin and pi extension that call `agent-state`. Claude Code, Codex and Mastra Code need no adapter — their hooks call `agent-state` directly. |
 | `install.sh` | Symlinks the scripts into `~/bin` and wires every agent found on the host. Idempotent; `--uninstall` removes the hooks and agent-state. |
 
 ### Labels: never rename, annotate
@@ -81,7 +81,7 @@ Session names stay as they are. A shell hook that auto-names sessions (a zsh
 agents that start sessions address them by name (`send-keys -t`), so a rename would
 break them. The sidebar shows a label instead:
 
-1. **Claude Code, opencode, pi** — the agistry `task · role` the session joined with.
+1. **Claude Code, opencode, pi, Mastra Code** — the agistry `task · role` the session joined with.
    Read from the local state files (`state/by-pid/<agent pid>` → `state/<sid>.json`),
    no HTTP; a by-pid file is trusted only if its recorded start time matches the live
    process.
@@ -93,13 +93,16 @@ break them. The sidebar shows a label instead:
    | Codex | `<summary> \| <project>` | summary |
    | opencode | `OC \| <session title>` / `OpenCode` | title |
    | pi | `π - <name> - <dir>` / `π - <dir>` | name (only after `/name`) |
+   | Mastra Code | `Mastra Code - <topic>` | topic |
+
+   Mastra Code runs as `node`, so the sidebar recognises it by that title.
 
 ### States
 
-| State | Claude Code / Codex hook | opencode event | pi event |
+| State | Claude Code / Codex / Mastra Code hook | opencode event | pi event |
 | --- | --- | --- | --- |
-| `working` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `session.status` busy | `agent_start` |
-| `waiting` | `PermissionRequest`, `Notification` (`permission_prompt`, `elicitation_dialog`), `PreToolUse` of `AskUserQuestion` | `permission.asked`, `question.asked` | `ui_prompt_start` |
+| `working` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`; Mastra Code also `AgentStart` (so a run woken by agistry mail counts), `PermissionResult` | `session.status` busy | `agent_start` |
+| `waiting` | `PermissionRequest`, `Notification` (`permission_prompt`, `elicitation_dialog`), `PreToolUse` of `AskUserQuestion` (`ask_user` in Mastra Code) | `permission.asked`, `question.asked` | `ui_prompt_start` |
 | `done` | `Stop`, `StopFailure`, `Interrupt`; `idle_prompt` only ends a stuck `working` (Esc fires no `Stop`) | all sessions idle, no prompt pending | `agent_settled` |
 | cleared | `SessionEnd` | — | `session_shutdown` |
 

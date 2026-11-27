@@ -26,14 +26,16 @@ main_client() {
 }
 
 # One row per session: "<session_id>:<project dir>\t<display>", under a header row
-# (empty id) per project: the git repo of the session's agent pane, worktrees folded into their repo,
+# (empty id) per project. A session running agents in more than one window (an
+# orchestrator that opened its workers with new-window) gets one row per window
+# instead, "<window_id>:<project dir>", so each agent can be selected. Projects: the git repo of the session's agent pane, worktrees folded into their repo,
 # else its directory. Within a project, sessions that need you come first. With a query
 # ($1) the headers go and each row carries its project instead, so typing a project name
 # still finds its sessions. One ps and one tmux call (plus a git call per directory),
 # joined in awk, because fzf re-runs this every 2s.
 list_sessions() {
   local F=$'\t' panes
-  panes="$(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}${F}#{pane_current_path}")"
+  panes="$(tmux list-panes -a -F "#{session_id}${F}#{session_name}${F}#{session_windows}${F}#{session_attached}${F}#{pane_pid}${F}#{pane_current_command}${F}#{pane_title}${F}#{@agent_state}${F}#{@agent_since}${F}#{@agent_kind}${F}#{pane_current_path}${F}#{window_id}${F}#{window_name}${F}#{window_active}")"
   awk -v statedir="$STATE_DIR" -v now="$(date +%s)" -v home="$HOME" -v query="${1:-}" '
     FNR == 1 { file++ }
     # file 1: directory -> the common git dir its worktrees share, if it is in a repo
@@ -51,44 +53,56 @@ list_sessions() {
       kids[a[2]] = kids[a[2]] " " a[1]
       next
     }
-    # file 3: panes
+    # file 3: panes, folded into their session and their window
     {
       split($0, f, "\t")
-      sid = f[1]; cmd = f[6]; title = f[7]; st = f[8]; since = f[9]; kind = f[10]
+      sid = f[1]; w = f[12]; cmd = f[6]; title = f[7]; st = f[8]; since = f[9]; kind = f[10]
+      if (cmd == "node" && title ~ /^Mastra Code( |$)/) cmd = "mastracode"   # runs as node
       if (!(sid in seen)) { seen[sid] = 1; order[++nsess] = sid; name[sid] = f[2]
                             wins[sid] = f[3]; att[sid] = f[4]; dir[sid] = f[11] }
+      if (!(w in seen)) { seen[w] = 1; wof[sid, ++nw[sid]] = w; name[w] = f[13]
+                          wactive[w] = f[14]; dir[w] = f[11] }
 
-      agent = (cmd == "claude" || cmd == "codex" || cmd == "opencode" || cmd == "pi")
+      agent = (cmd == "claude" || cmd == "codex" || cmd == "opencode" || cmd == "pi" || cmd == "mastracode")
       # A state is only live while its agent still owns the pane; once the pane is back
       # at a shell (agent exited without SessionEnd), ignore what it left behind.
       if (!agent || kind != cmd) st = ""
       lab = agent ? label(cmd, f[5], title) : ""
+      if (agent && !(w in hasagent)) { hasagent[w] = 1; nagent[sid]++ }
 
       p = prio(st) + (agent ? 1 : 0)
-      if (!(sid in best) || p > best[sid]) {
-        best[sid] = p; bstate[sid] = st; bsince[sid] = since; dir[sid] = f[11]
-        if (lab != "") blabel[sid] = lab
-      }
-      if (blabel[sid] == "" && lab != "") blabel[sid] = lab
+      take(sid, p, st, since, lab, f[11])
+      take(w, p, st, since, lab, f[11])
     }
     END {
+      # The rows: a session, or each window of a session with several agent windows.
+      n = 0
       for (i = 1; i <= nsess; i++) {
-        s = order[i]; idx[i] = s
+        s = order[i]
+        if (nagent[s] > 1)
+          for (j = 1; j <= nw[s]; j++) {
+            w = wof[s, j]; unit[++n] = w
+            rname[w] = name[s] "/" name[w]; rwins[w] = 1; ratt[w] = att[s] > 0 && wactive[w]
+          }
+        else { unit[++n] = s; rname[s] = name[s]; rwins[s] = wins[s]; ratt[s] = att[s] > 0 }
+      }
+      for (i = 1; i <= n; i++) {
+        s = unit[i]; idx[i] = s
         root = (dir[s] in repo) ? repo[dir[s]] : dir[s]
         proj[s] = root == home ? "~" : basename(root); pdir[s] = root
         count[proj[s]]++
-        key[i] = tolower(proj[s]) "\t" (100 - prio(bstate[s])) "\t" tolower(name[s])
+        key[i] = tolower(proj[s]) "\t" (100 - prio(bstate[s])) "\t" tolower(rname[s])
       }
-      for (i = 2; i <= nsess; i++)                    # insertion sort; a few dozen rows
+      for (i = 2; i <= n; i++)                    # insertion sort; a few dozen rows
         for (j = i; j > 1 && key[j - 1] > key[j]; j--) {
           t = key[j]; key[j] = key[j - 1]; key[j - 1] = t
           t = idx[j]; idx[j] = idx[j - 1]; idx[j - 1] = t
         }
-      for (i = 1; i <= nsess; i++) {
+      for (i = 1; i <= n; i++) {
         s = idx[i]; st = bstate[s]; pr = proj[s]
         if (query == "" && pr != last) printf ":%s\t\033[2m── %s (%d)\033[0m\n", pdir[s], pr, count[pr]
         last = pr
-        sn = short(name[s], pr)
+        sn = short(rname[s], pr)
         if (query != "") sn = pr "/" sn
         g = st == "waiting" ? "\033[1;31m●\033[0m" : st == "working" ? "\033[33m◐\033[0m" \
           : st == "done" ? "\033[32m✓\033[0m" : " "
@@ -96,11 +110,21 @@ list_sessions() {
         line = g " "
         if (blabel[s] != "") line = line "\033[1m" blabel[s] "\033[0m  \033[2m" sn "\033[0m"
         else line = line sn
-        if (wins[s] > 1) line = line " \033[2m[" wins[s] "]\033[0m"
+        if (rwins[s] > 1) line = line " \033[2m[" wins[s] "]\033[0m"
         if (age != "") line = line " \033[2m" age "\033[0m"
-        if (att[s] > 0) line = line " \033[36m◀\033[0m"
+        if (ratt[s]) line = line " \033[36m◀\033[0m"
         printf "%s:%s\t%s\n", s, pdir[s], line
       }
+    }
+
+    # Keep the pane that matters most for a row (needs you > working > done > idle, an
+    # agent over a shell), and its label.
+    function take(u, p, st, since, lab, d) {
+      if (!(u in best) || p > best[u]) {
+        best[u] = p; bstate[u] = st; bsince[u] = since; dir[u] = d
+        if (lab != "") blabel[u] = lab
+      }
+      if (blabel[u] == "" && lab != "") blabel[u] = lab
     }
 
     function basename(p) {
@@ -123,12 +147,13 @@ list_sessions() {
     function ago(d) {
       return d < 60 ? "" : d < 3600 ? int(d / 60) "m" : d < 86400 ? int(d / 3600) "h" : int(d / 86400) "d"
     }
-    # Claude, opencode, pi: the agistry task/role the session joined with. Everyone:
-    # the title the agent set, minus its decorations. Empty when the title is only a
-    # default.
+    # Claude, opencode, pi, Mastra Code: the agistry task/role the session joined with.
+    # Everyone: the title the agent set, minus its decorations. Empty when the title is
+    # only a default.
     function label(cmd, ppid, title,    t) {
       if ((cmd == "claude" || cmd == "opencode" || cmd == "pi") && (t = joined(ppid, cmd, 3)) != "")
         return t
+      if (cmd == "mastracode" && (t = joined(ppid, "node", 3)) != "") return t
       t = title
       if (cmd == "claude") {
         sub(/^[^ -~]+ /, "", t); sub(/ [^ -~]+$/, "", t)        # "✳ topic ⑂" -> "topic"
@@ -138,6 +163,8 @@ list_sessions() {
         if (t ~ /^([Cc]odex)?$/) t = ""
       } else if (cmd == "opencode") {
         if (t == "OpenCode" || !sub(/^OC \| /, "", t)) t = ""    # "OC | topic"
+      } else if (cmd == "mastracode") {                          # "Mastra Code - topic"
+        if (!sub(/^Mastra Code - /, "", t)) t = ""
       } else if (cmd == "pi") {                                  # "π - name - dir" | "π - dir"
         if (sub(/^[^ ]+ - /, "", t) && match(t, /^.* - /)) t = substr(t, 1, RLENGTH - 3)
         else t = ""

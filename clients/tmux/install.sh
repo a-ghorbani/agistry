@@ -7,6 +7,7 @@
 #   Codex        hooks in ~/.codex/hooks.json          (merged, backup saved; trust once via /hooks)
 #   opencode     plugin  ~/.config/opencode/plugins/agent-state.js   (symlink)
 #   pi           extension ~/.pi/agent/extensions/agent-state.ts     (symlink)
+#   Mastra Code  hooks in ~/.mastracode/hooks.json   (merged, backup saved)
 # Safe to re-run. --uninstall removes the hooks and agent-state (the tmux-main and
 # tmux-sidebar links stay; they work without it).
 #
@@ -90,6 +91,26 @@ if [ -d "$HOME/.codex" ]; then
   [ $UNINSTALL = 0 ] && echo "  codex: new hooks are skipped until trusted — run /hooks in a codex session once"
 fi
 
+# Mastra Code's hooks file is flat ({"Event": [{type, command}]}), unlike Claude's.
+wire_mastracode() { # file
+  local file="$1" tmp
+  [ -f "$file" ] || echo '{}' > "$file"
+  cp "$file" "$file.bak.$(date +%s)"
+  tmp="$(mktemp)"
+  jq --arg cmd "$STATE mastracode" --argjson ev "$MASTRACODE_EVENTS" --argjson add "$((1 - UNINSTALL))" '
+    with_entries(if (.value | type) == "array"
+                 then .value |= map(select((.command // "") | test("agent-state") | not)) else . end)
+    | with_entries(select((.value | type) != "array" or (.value | length) > 0))
+    | if $add == 1 then reduce $ev[] as $e (.; .[$e] = ((.[$e] // []) + [{type: "command", command: $cmd}]))
+      else . end
+  ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file"
+  echo "  hooks $([ $UNINSTALL = 1 ] && echo removed from || echo wired into) $file (backup saved)"
+}
+MASTRACODE_EVENTS='["SessionStart","UserPromptSubmit","AgentStart","PreToolUse","PostToolUse",
+  "PermissionRequest","PermissionResult","Stop","Interrupt","SessionEnd"]'
+[ -d "$HOME/.mastracode" ] && wire_mastracode "$HOME/.mastracode/hooks.json"
+
 OC="$HOME/.config/opencode/plugins/agent-state.js"
 PI="$HOME/.pi/agent/extensions/agent-state.ts"
 if [ $UNINSTALL = 1 ]; then
@@ -102,4 +123,4 @@ else
   [ -d "$HOME/.pi/agent" ] && link "$HERE/adapters/pi-agent-state.ts" "$PI"
 fi
 
-echo "Done. Claude picks up hooks live; restart codex, opencode and pi sessions to load theirs."
+echo "Done. Claude picks up hooks live; restart codex, opencode, pi and Mastra Code sessions to load theirs."
